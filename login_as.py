@@ -39,6 +39,7 @@ def loginAs(p_user, p_passwd):
     l_driver = getDriver()
 
     l_driver.get('http://localhost/FBWatch/FBWatchLogin.html')
+    #l_driver.get('http://192.168.0.51/FBWatch/FBWatchLogin.html')
 
     try:
         l_status = WebDriverWait(l_driver, 15).until(EC.presence_of_element_located((By.ID, 'status')))
@@ -46,6 +47,14 @@ def loginAs(p_user, p_passwd):
         # l_status = l_driver.find_element_by_id('status')
         while l_status.text != 'Please log into Facebook.':
             time.sleep(1)
+
+        l_mainWindowHandle = None
+        for l_handle in l_driver.window_handles:
+            print('Handle:', l_handle)
+            l_driver.switch_to.window(l_handle)
+            print('title:', l_driver.title)
+
+            l_mainWindowHandle = l_handle
 
         l_button = l_driver.find_element_by_xpath('//span/iframe')
 
@@ -61,6 +70,7 @@ def loginAs(p_user, p_passwd):
         if re.match('Log In', l_buttonText):
             l_button.click()
 
+        # Handle log-in pop-up
         l_finished = False
         while not l_finished:
             for l_handle in l_driver.window_handles:
@@ -86,22 +96,47 @@ def loginAs(p_user, p_passwd):
                         l_driver.find_element_by_id('loginbutton').click()
                     except EX.NoSuchElementException:
                         print('[01] Something is badly wrong (Element not found) ...')
-                        return 0
+                        return None, None
                     except EX.TimeoutException:
                         print('[02] Something is badly wrong (Timeout) ...')
+                        return None, None
 
                     break
+
+        # Handle permission pop-up if any or moves on after 10 s
+        time.sleep(1)
+        l_finished = False
+        l_count = 0
+        while not l_finished and l_count < 10:
+            for l_handle in l_driver.window_handles:
+                print('Handle:', l_handle)
+                l_driver.switch_to.window(l_handle)
+                print('title:', l_driver.title)
+
+                if l_driver.title == 'Log in with Facebook':
+                    print('Found Permissions Window')
+
+                    # Approve
+                    l_driver.find_element_by_name('__CONFIRM__').click()
+
+                    l_finished = True
+
+            time.sleep(1)
+            l_count += 1
+
+        l_driver.switch_to.window(l_mainWindowHandle)
+        l_accessToken = l_status.text.split('|')[1]
 
     except EX.TimeoutException:
         print('Did not find button')
 
         l_body = l_driver.find_element_by_xpath('//body').get_attribute('innerHTML')
         print(l_body)
-        return None
+        return None, None
 
     print('Sucessufully logged in as [{0}]'.format(p_user))
 
-    return l_driver
+    return l_driver, l_accessToken
 
 # ---------------------------------------------------- Main section ----------------------------------------------------
 if __name__ == "__main__":
@@ -113,6 +148,8 @@ if __name__ == "__main__":
     print('| v. 1.0 - 21/04/2016                                        |')
     print('+------------------------------------------------------------+')
 
-    l_driver = loginAs('kabir.eridu@gmail.com', '12Alhamdulillah')
+    # l_driver = loginAs('kabir.eridu@gmail.com', '12Alhamdulillah')
+    l_driver, l_accessToken = loginAs('john.braekernell@yahoo.com', '15Eyyaka')
+    print('l_accessToken:', l_accessToken)
 
     #l_driver.quit()
