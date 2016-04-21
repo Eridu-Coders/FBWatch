@@ -41,13 +41,13 @@ def loginAs(p_user, p_passwd):
     l_driver.get('http://localhost/FBWatch/FBWatchLogin.html')
 
     try:
-        l_button = WebDriverWait(l_driver, 15).until(EC.presence_of_element_located(
-            (By.XPATH, '//span/iframe')))
-            # (By.XPATH, '//fb:login-button/span/iframe')))
+        l_status = WebDriverWait(l_driver, 15).until(EC.presence_of_element_located((By.ID, 'status')))
 
-        l_status = l_driver.find_element_by_id('status')
+        # l_status = l_driver.find_element_by_id('status')
         while l_status.text != 'Please log into Facebook.':
             time.sleep(1)
+
+        l_button = l_driver.find_element_by_xpath('//span/iframe')
 
         l_src = l_button.get_attribute('src')
         l_content = urllib.request.urlopen(l_src).read().decode('utf-8').strip()
