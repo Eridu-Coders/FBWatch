@@ -15,7 +15,10 @@ G_MAX_POST = 300
 G_LIMIT = 100
 
 # ---------------------------------------------------- Functions -------------------------------------------------------
-def storeObject(p_id, p_parentId, p_pageId, p_date, p_text1, p_text2):
+def storeObject(p_id, p_parentId, p_pageId, p_date, p_text1, p_text2, p_userId=None):
+    pass
+
+def storeUser(p_id, p_name):
     pass
 
 def getOptionalField(p_json, p_field):
@@ -60,10 +63,66 @@ def getPostsFromPage(p_id, p_accessToken):
             # store post information
             storeObject(l_postId, p_id, p_id, l_postDate, l_story, l_message)
 
+            # get comments
+            getComments(l_postId, p_id, p_accessToken, 0)
+
             l_postCount += 1
 
         if 'paging' in l_responseData.keys() and 'next' in l_responseData['paging'].keys():
             print('   *** Getting next page ...')
+            l_request = l_responseData['paging']['next']
+            l_response = urllib.request.urlopen(l_request).read().decode('utf-8').strip()
+
+            l_responseData = json.loads(l_response)
+        else:
+            break
+
+def getComments(p_id, p_pageId, p_accessToken, p_depth):
+    l_depthPadding = ' ' * ((p_depth + 2) * 3)
+    # get list of posts in this page's feed
+    l_request = 'https://graph.facebook.com/v2.6/{0}/comments?limit={2}&access_token={1}'.format(
+        p_id, p_accessToken, G_LIMIT)
+    # print('   l_request:', l_request)
+    l_response = urllib.request.urlopen(l_request).read().decode('utf-8').strip()
+
+    l_responseData = json.loads(l_response)
+    # print('   Paging:', l_responseData['paging'])
+    print('{0}comment count -->'.format(l_depthPadding[:-3]), len(l_responseData['data']))
+    if len(l_responseData['data']) > 0:
+        print('{0}Latest date:'.format(l_depthPadding), l_responseData['data'][0]['created_time'])
+
+    while True:
+        for l_comment in l_responseData['data']:
+            l_commentId = l_comment['id']
+            l_commentDate = l_comment['created_time']
+            print('{0}--------------------------------------------------------'.format(l_depthPadding))
+            print('{0}id      :'.format(l_depthPadding), l_commentId)
+            print('{0}date    :'.format(l_depthPadding), l_commentDate)
+
+            l_userId= ''
+            if 'from' in l_comment.keys():
+                l_userId, l_userIdShort = getOptionalField(l_comment['from'], 'id')
+                l_userName, l_userNameShort = getOptionalField(l_comment['from'], 'name')
+
+                print('{0}from    : {1} [{2}]'.format(l_depthPadding, l_userNameShort, l_userId))
+
+                # store user data
+                storeUser(l_userId, l_userName)
+
+            l_story, l_storyShort = getOptionalField(l_comment, 'story')
+            l_message, l_messageShort = getOptionalField(l_comment, 'message')
+
+            print('{0}story   :'.format(l_depthPadding), l_storyShort)
+            print('{0}message :'.format(l_depthPadding), l_messageShort)
+
+            # store post information
+            storeObject(l_commentId, p_id, p_pageId, l_commentDate, l_story, l_message, p_userId=l_userId)
+
+            # get comments
+            getComments(l_commentId, p_id, p_accessToken, p_depth+1)
+
+        if 'paging' in l_responseData.keys() and 'next' in l_responseData['paging'].keys():
+            print('{0}*** Getting next page ...'.format(l_depthPadding))
             l_request = l_responseData['paging']['next']
             l_response = urllib.request.urlopen(l_request).read().decode('utf-8').strip()
 
