@@ -154,7 +154,11 @@ if __name__ == "__main__":
     print('+------------------------------------------------------------+')
 
     # l_driver = loginAs('kabir.eridu@gmail.com', '12Alhamdulillah')
+
     l_driver, l_accessToken = loginAs('john.braekernell@yahoo.com', '15Eyyaka')
     print('l_accessToken:', l_accessToken)
+    l_driver.quit()
 
-    #l_driver.quit()
+    l_driver, l_accessToken = loginAs('john.braekernell@yahoo.com', '15Eyyaka')
+    print('l_accessToken:', l_accessToken)
+    l_driver.quit()

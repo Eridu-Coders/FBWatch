@@ -33,6 +33,9 @@ g_pass = '15Eyyaka'
 
 g_errFile = None
 
+g_FBRequestCount = 0
+G_TOKEN_LIFESPAN = 10000
+
 # ---------------------------------------------------- Functions -------------------------------------------------------
 def cleanForInsert(s):
     r = re.sub('"', '""', s)
@@ -45,6 +48,8 @@ def storeObject(p_padding, p_type, p_id, p_parentId, p_pageId, p_date, p_text1, 
     global g_objectFound
 
     g_objectFound += 1
+
+    l_stored = False
 
     # date format: 2016-04-22T12:03:06+0000 ---> 2016-04-22 12:03:06
     l_date = re.sub('T', ' ', p_date)
@@ -72,6 +77,7 @@ def storeObject(p_padding, p_type, p_id, p_parentId, p_pageId, p_date, p_text1, 
         l_cursor.execute(l_query)
         g_connector.commit()
         g_objectStored += 1
+        l_stored = True
     except mysql.connector.errors.IntegrityError:
         print('{0}Object already in DB'.format(p_padding))
     except Exception as e:
@@ -83,6 +89,8 @@ def storeObject(p_padding, p_type, p_id, p_parentId, p_pageId, p_date, p_text1, 
         p_padding, g_objectFound, g_objectStored))
 
     l_cursor.close()
+
+    return l_stored
 
 def storeUser(p_id, p_name, p_date, p_padding):
     # date format: 2016-04-22T12:03:06+0000 ---> 2016-04-22 12:03:06
@@ -139,7 +147,8 @@ def getPostsFromPage(p_id):
     print('   Latest date:', l_responseData['data'][0]['created_time'])
 
     l_postCount = 0
-    while l_postCount < G_MAX_POST:
+    l_finished = False
+    while not l_finished:
         for l_post in l_responseData['data']:
             l_postId = l_post['id']
             l_postDate = l_post['created_time']
@@ -152,8 +161,9 @@ def getPostsFromPage(p_id):
                 re.sub(r'\+\d+$', '', l_postDate), '%Y-%m-%dT%H:%M:%S')
             print('   date (P):', l_msgDate)
 
+            # if message older than 8 days ---> break loop
             if (l_msgDate - datetime.datetime.now()).days > 8:
-                l_postCount = G_MAX_POST
+                l_finished = True
                 break
 
             l_story, l_storyShort = getOptionalField(l_post, 'story')
@@ -163,21 +173,27 @@ def getPostsFromPage(p_id):
             print('   message :', l_messageShort)
 
             # store post information
-            storeObject('   ', 'Post', l_postId, p_id, p_id, l_postDate, l_story, l_message)
-
-            # get comments
-            getComments(l_postId, p_id, 0)
+            if storeObject('   ', 'Post', l_postId, p_id, p_id, l_postDate, l_story, l_message):
+                # get comments
+                getComments(l_postId, p_id, 0)
+            else:
+                # if already in DB ---> break loop
+                l_finished = True
+                break
 
             l_postCount += 1
 
-        if 'paging' in l_responseData.keys() and 'next' in l_responseData['paging'].keys():
-            print('   *** Getting next page ...')
-            l_request = l_responseData['paging']['next']
-            l_response = performRequest(l_request)
-
-            l_responseData = json.loads(l_response)
+        if l_postCount > G_MAX_POST:
+            l_finished = True
         else:
-            break
+            if 'paging' in l_responseData.keys() and 'next' in l_responseData['paging'].keys():
+                print('   *** Getting next page ...')
+                l_request = l_responseData['paging']['next']
+                l_response = performRequest(l_request)
+
+                l_responseData = json.loads(l_response)
+            else:
+                break
 
 def getComments(p_id, p_pageId, p_depth):
     l_depthPadding = ' ' * ((p_depth + 2) * 3)
@@ -236,11 +252,18 @@ def getComments(p_id, p_pageId, p_depth):
 # calls Facebook's HTTP API and traps errors if any
 def performRequest(p_request):
     global g_FBToken
+    global g_FBRequestCount
 
     l_request = p_request
 
     l_finished = False
     l_response = None
+
+    # print('g_FBRequestCount:', g_FBRequestCount)
+    if g_FBRequestCount > 0 and g_FBRequestCount % G_TOKEN_LIFESPAN == 0:
+        l_request = renewTokenAndRequest(l_request)
+
+    g_FBRequestCount += 1
 
     l_errCount = 0
     while not l_finished:
@@ -274,7 +297,6 @@ def performRequest(p_request):
                     ))
 
                     time.sleep(l_wait)
-                    l_request = renewTokenAndRequest(l_request)
 
                 # Session expired
                 elif re.search(r'Session has expired', l_FBMessage):
@@ -284,8 +306,7 @@ def performRequest(p_request):
                         'Waiting for {0} seconds'.format(l_wait)
                     ))
 
-                    time.sleep(l_wait)
-                    l_request = renewTokenAndRequest(l_request)
+                    sys.exit()
 
                 # Other FB error
                 else:
@@ -295,9 +316,7 @@ def performRequest(p_request):
                         'Waiting for {0} seconds'.format(l_wait)
                     ))
 
-                    time.sleep(l_wait)
-                    if l_wait > 60 * 15:
-                        l_request = renewTokenAndRequest(l_request)
+                    sys.exit()
 
             # Non FB HTTPError
             else:
@@ -371,7 +390,9 @@ def getFBToken():
 
     l_driver, l_accessToken = loginAs(g_user, g_pass)
     if l_accessToken is not None:
+        print('g_FBToken before:', g_FBToken)
         g_FBToken = l_accessToken
+        print('g_FBToken new   :', g_FBToken)
         l_driver.quit()
     else:
         print('Cannot obtain FB Token for:', g_user)
@@ -396,8 +417,6 @@ if __name__ == "__main__":
     getFBToken()
 
     g_errFile = open('FBWatchHTTPErrors.txt', 'w')
-
-    print('l_accessToken:', g_FBToken)
 
     # list of likes from john.braekernell@yahoo.com --> starting point
     l_request = 'https://graph.facebook.com/v2.6/me/likes?access_token={0}'.format(g_FBToken)
