@@ -12,6 +12,7 @@ from selenium.common import exceptions as EX
 import time
 import re
 import urllib.request
+import sys
 
 from lxml import html
 
@@ -68,7 +69,11 @@ def loginAs(p_user, p_passwd):
         print('l_buttonText:', l_buttonText[0:50])
 
         if re.match('Log In', l_buttonText):
+            time.sleep(2)
             l_button.click()
+        else:
+            print('Cannot log in')
+            sys.exit()
 
         # Handle log-in pop-up
         l_finished = False
