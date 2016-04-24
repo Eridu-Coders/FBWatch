@@ -597,7 +597,7 @@ if __name__ == "__main__":
     print('|                                                            |')
     print('| Bulk facebook download of posts/comments                   |')
     print('|                                                            |')
-    print('| v. 1.0 - 22/04/2016                                        |')
+    print('| v. 1.1 - 24/04/2016                                        |')
     print('+------------------------------------------------------------+')
 
     g_errFile = open('FBWatchHTTPErrors.txt', 'w')
