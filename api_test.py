@@ -4,8 +4,10 @@
 __author__ = 'fi11222'
 
 import urllib.request
+import urllib.error
 import json
 import re
+import sys
 
 from login_as import loginAs
 
@@ -20,6 +22,9 @@ if __name__ == "__main__":
     print('+------------------------------------------------------------+')
 
     # l_driver = loginAs('kabir.eridu@gmail.com', '12Alhamdulillah')
+
+    fOut = open('api_test-fields.txt', 'w')
+
     l_driver, l_accessToken = loginAs('john.braekernell@yahoo.com', '15Eyyaka')
     if l_accessToken is not None:
         print('l_accessToken:', l_accessToken)
@@ -39,9 +44,26 @@ if __name__ == "__main__":
             print('id     :', l_liked['id'])
             print('name   :', l_liked['name'])
 
-            l_request = 'https://graph.facebook.com/v2.6/{0}/feed?access_token={1}'.format(
-                l_liked['id'], l_accessToken)
-            l_response = urllib.request.urlopen(l_request).read().decode('utf-8').strip()
+            l_fieldList = 'id,created_time,from,story,message,' + \
+                          'caption,description,icon,link,name,object_id,picture,place,shares,source,type'
+
+            l_request = ('https://graph.facebook.com/v2.6/{0}/' +
+                         'feed?access_token={1}&fields={2}').format(
+                l_liked['id'], l_accessToken, l_fieldList)
+            try:
+                l_response = urllib.request.urlopen(l_request).read().decode('utf-8').strip()
+            except urllib.error.HTTPError as e:
+                l_headersDict = dict(e.headers.items())
+
+                print('{0} {1}\n{2} {3}\n{4} {5}\n{6} {7}\n{8} {9}\n{10} {11}'.format(
+                    'Request Problem:', repr(e),
+                    '   Code        :', e.code,
+                    '   Errno       :', e.errno,
+                    '   Headers     :', l_headersDict,
+                    '   Message     :', e.msg,
+                    'p_request      :', l_request
+                ))
+                sys.exit()
 
             # print('l_request:', l_request)
             # print('   l_response:', l_response)
@@ -54,6 +76,11 @@ if __name__ == "__main__":
                 print('   ===========================================================')
                 print('   id      :', l_post['id'])
                 print('   date    :', l_post['created_time'])
+
+                fOut.write('====================================\n')
+                fOut.write('fields P:{0}\n'.format(l_post.keys()))
+                for l_field in l_post.keys():
+                    fOut.write('   {0}: {1}\n'.format(l_field, l_post[l_field]))
 
                 if 'from' in l_post.keys():
                     print('   from    : {0} [{1}]'.format(l_post['from']['name'], l_post['from']['id']))
@@ -73,7 +100,9 @@ if __name__ == "__main__":
                 if 'story' not in l_post.keys() and 'message' not in l_post.keys():
                     print('   *** ', repr(l_post))
 
-                l_request = 'https://graph.facebook.com/v2.6/{0}/comments?access_token={1}'.format(
+                l_request = ('https://graph.facebook.com/v2.6/{0}/comments?access_token={1}&' +
+                             'fields=id,created_time,from,story,message,' +
+                             'user_likes,like_count,comment_count,attachment,object').format(
                     l_post['id'], l_accessToken)
                 l_response = urllib.request.urlopen(l_request).read().decode('utf-8').strip()
 
@@ -87,6 +116,9 @@ if __name__ == "__main__":
                     print('      ------------------------------------------------------')
                     print('      id      :', l_comment['id'])
                     print('      date    :', l_comment['created_time'])
+                    print('      fields  :', l_comment.keys())
+
+                    fOut.write('fields 1:{0}\n'.format(l_comment.keys()))
 
                     if 'paging' in l_comment.keys():
                         print('      paging  :', repr(l_comment['paging']))
@@ -110,5 +142,32 @@ if __name__ == "__main__":
 
                     if 'story' not in l_comment.keys() and 'message' not in l_comment.keys():
                         print('      +++ ', repr(l_comment))
+
+                    l_request = ('https://graph.facebook.com/v2.6/{0}' +
+                                 '?access_token={1}&fields=user_likes,like_count,comment_count,attachment,object').format(
+                        l_comment['id'], l_accessToken)
+                    try:
+                        l_response = urllib.request.urlopen(l_request).read().decode('utf-8').strip()
+                    except urllib.error.HTTPError as e:
+                        l_headersDict = dict(e.headers.items())
+
+                        print('{0} {1}\n{2} {3}\n{4} {5}\n{6} {7}\n{8} {9}\n{10} {11}'.format(
+                            'Request Problem:', repr(e),
+                            '   Code        :', e.code,
+                            '   Errno       :', e.errno,
+                            '   Headers     :', l_headersDict,
+                            '   Message     :', e.msg,
+                            'p_request      :', l_request
+                        ))
+                        sys.exit()
+
+                    l_responseData4 = json.loads(l_response)
+                    print('      fields 2:', l_responseData4.keys())
+                    fOut.write('fields 2:{0}\n'.format(l_responseData4.keys()))
+
+                    for l_field in l_responseData4.keys():
+                        fOut.write('   {0}: {1}\n'.format(l_field, l_responseData4[l_field]))
+
+                    fOut.flush()
 
     l_driver.quit()

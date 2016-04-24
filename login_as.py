@@ -51,9 +51,8 @@ def loginAs(p_user, p_passwd):
 
         l_mainWindowHandle = None
         for l_handle in l_driver.window_handles:
-            print('Handle:', l_handle)
             l_driver.switch_to.window(l_handle)
-            print('title:', l_driver.title)
+            print('Window: {0} {1}'.format(l_handle, l_driver.title))
 
             l_mainWindowHandle = l_handle
 
@@ -79,9 +78,8 @@ def loginAs(p_user, p_passwd):
         l_finished = False
         while not l_finished:
             for l_handle in l_driver.window_handles:
-                print('Handle:', l_handle)
                 l_driver.switch_to.window(l_handle)
-                print('title:', l_driver.title)
+                print('Window: {0} {1}'.format(l_handle, l_driver.title))
 
                 if l_driver.title == 'Facebook':
                     print('Found Login window')
@@ -114,9 +112,8 @@ def loginAs(p_user, p_passwd):
         l_count = 0
         while not l_finished and l_count < 10:
             for l_handle in l_driver.window_handles:
-                print('Handle:', l_handle)
                 l_driver.switch_to.window(l_handle)
-                print('title:', l_driver.title)
+                print('Window: {0} {1}'.format(l_handle, l_driver.title))
 
                 if l_driver.title == 'Log in with Facebook':
                     print('Found Permissions Window')

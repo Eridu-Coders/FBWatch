@@ -16,25 +16,26 @@ import mysql.connector
 from login_as import loginAs
 
 # ---------------------------------------------------- Globals ---------------------------------------------------------
-G_MAX_POST = 300
-G_LIMIT = 100
-G_WAIT_FB = 60 * 60
-G_WAIT_FB_SESSION = 60 * 10
+G_MAX_POST = 300                            # max number of posts retrieved from a page
+G_LIMIT = 100                               # number of elements retrieved in one request (API param)
+G_WAIT_FB = 60 * 60                         # wait period after a request limit hit (in seconds)
 
-g_connector = None
+g_connector = None                          # MySQL connector
 
-g_objectFound = 0
-g_objectStored = 0
+g_objectFound = 0                           # number of objects retrieved
+g_objectStored = 0                          # number of objects stored
 
-g_FBToken = None
+g_FBToken = None                            # current FB access token
 
-g_user = 'john.braekernell@yahoo.com'
-g_pass = '15Eyyaka'
+g_user = 'john.braekernell@yahoo.com'       # user name
+g_pass = '15Eyyaka'                         # password
 
-g_errFile = None
+g_errFile = None                            # log file for errors
 
-g_FBRequestCount = 0
-G_TOKEN_LIFESPAN = 10000
+g_FBRequestCount = 0                        # number of requests performed
+G_TOKEN_LIFESPAN = 2000                     # number of requests after which the token must be renewed
+
+G_API_VERSION = '2.6'                       # version of the FB API used
 
 # ---------------------------------------------------- Functions -------------------------------------------------------
 def cleanForInsert(s):
@@ -137,14 +138,18 @@ def getOptionalField(p_json, p_field):
 
 def getPostsFromPage(p_id):
     # get list of posts in this page's feed
-    l_request = 'https://graph.facebook.com/v2.6/{0}/feed?limit={2}&access_token={1}'.format(
-        p_id, g_FBToken, G_LIMIT)
+    l_fieldList = 'id,created_time,from,story,message,user_likes,like_count,comment_count,' +\
+                  'caption,description,icon,link,name,object_id,picture,place,shares,source,type'
+    l_request = ('https://graph.facebook.com/{0}/{1}/feed?limit={2}&' +
+                 'access_token={3}&fields={4},object').format(
+        G_API_VERSION, p_id, G_LIMIT, g_FBToken, l_fieldList)
     # print('   l_request:', l_request)
     l_response = performRequest(l_request)
 
     l_responseData = json.loads(l_response)
     # print('   Paging:', l_responseData['paging'])
-    print('   Latest date:', l_responseData['data'][0]['created_time'])
+    if len(l_responseData['data']) > 0:
+        print('   Latest date:', l_responseData['data'][0]['created_time'])
 
     l_postCount = 0
     l_finished = False
@@ -198,7 +203,9 @@ def getPostsFromPage(p_id):
 def getComments(p_id, p_pageId, p_depth):
     l_depthPadding = ' ' * ((p_depth + 2) * 3)
     # get list of posts in this page's feed
-    l_request = 'https://graph.facebook.com/v2.6/{0}/comments?limit={2}&access_token={1}'.format(
+    l_request = ('https://graph.facebook.com/v2.6/{0}/comments?limit={2}&access_token={1}&' +
+                 'fields=id,created_time,from,story,message,user_likes,like_count,' +
+                 'comment_count,attachment,object').format(
         p_id, g_FBToken, G_LIMIT)
     # print('   l_request:', l_request)
     l_response = performRequest(l_request)
@@ -260,6 +267,12 @@ def performRequest(p_request):
     l_response = None
 
     # print('g_FBRequestCount:', g_FBRequestCount)
+
+    # replace access token with the latest (this is necessary because
+    # some old tokens may remain in the 'next' parameters kept from previous requests)
+    l_request = freshenToken(l_request)
+
+    # request new token every G_TOKEN_LIFESPAN API requests
     if g_FBRequestCount > 0 and g_FBRequestCount % G_TOKEN_LIFESPAN == 0:
         l_request = renewTokenAndRequest(l_request)
 
@@ -296,17 +309,28 @@ def performRequest(p_request):
                         'Waiting for {0} seconds'.format(l_wait)
                     ))
 
-                    time.sleep(l_wait)
+                    l_sleepPeriod = 5 * 60
+                    for i in range(int(l_wait / l_sleepPeriod)):
+                        time.sleep(l_sleepPeriod)
+                        l_request = renewTokenAndRequest(l_request)
 
-                # Session expired
+                # Session expired ---> nothing to do
                 elif re.search(r'Session has expired', l_FBMessage):
-                    l_wait = G_WAIT_FB_SESSION
-                    printAndSave('{0} {1}\n{2}\n'.format(
-                        'FB session expiry msg: ', l_FBMessage,
-                        'Waiting for {0} seconds'.format(l_wait)
-                    ))
+                    printAndSave('{0} {1}\n'.format(
+                        'FB session expiry msg: ', l_FBMessage))
 
                     sys.exit()
+
+                # Unsupported get request ---> return empty data and abandon request attempt
+                elif re.search(r'Unsupported get request', l_FBMessage):
+                    l_response = '{"data": []}'
+
+                    printAndSave('{0} {1}\n{2}\n'.format(
+                        'FB unsupported get msg: ', l_FBMessage,
+                        'Returned: {0}'.format(l_response)
+                    ))
+
+                    l_finished = True
 
                 # Other FB error
                 else:
@@ -359,6 +383,7 @@ def performRequest(p_request):
 def printAndSave(s):
     print(s, end='')
     g_errFile.write(s)
+    g_errFile.flush()
 
 def getWait(p_errorCount):
     if p_errorCount < 3:
@@ -379,20 +404,26 @@ def getWait(p_errorCount):
         print('Too many errors')
         sys.exit()
 
+def freshenToken(p_request):
+    # case where the token is not at the end of the param string
+    l_request = re.sub('access_token=[^&]&',
+                       'access_token={0}&'.format(g_FBToken), p_request)
+    # case where the token is at the end of the param string
+    return re.sub('access_token=[^&]$',
+                       'access_token={0}'.format(g_FBToken), l_request)
+
 def renewTokenAndRequest(p_request):
-    l_oldToken = g_FBToken
     getFBToken()
-    return re.sub('access_token={0}'.format(l_oldToken),
-                  'access_token={0}'.format(g_FBToken), p_request)
+    return freshenToken(p_request)
 
 def getFBToken():
     global g_FBToken
 
     l_driver, l_accessToken = loginAs(g_user, g_pass)
     if l_accessToken is not None:
-        print('g_FBToken before:', g_FBToken)
+        printAndSave('g_FBToken before: {0}\n'.format(g_FBToken))
         g_FBToken = l_accessToken
-        print('g_FBToken new   :', g_FBToken)
+        printAndSave('g_FBToken new   : {0}\n'.format(g_FBToken))
         l_driver.quit()
     else:
         print('Cannot obtain FB Token for:', g_user)
@@ -408,6 +439,8 @@ if __name__ == "__main__":
     print('| v. 1.0 - 22/04/2016                                        |')
     print('+------------------------------------------------------------+')
 
+    g_errFile = open('FBWatchHTTPErrors.txt', 'w')
+
     g_connector = mysql.connector.connect(
         user='root',
         password='TNScrape',
@@ -415,8 +448,6 @@ if __name__ == "__main__":
         database='FBWatch')
 
     getFBToken()
-
-    g_errFile = open('FBWatchHTTPErrors.txt', 'w')
 
     # list of likes from john.braekernell@yahoo.com --> starting point
     l_request = 'https://graph.facebook.com/v2.6/me/likes?access_token={0}'.format(g_FBToken)
