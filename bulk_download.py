@@ -144,7 +144,6 @@ def storeObject(p_padding, p_type, p_date,
         try:
             l_cursor.execute(l_query)
             g_connector.commit()
-            g_objectStored += 1
             l_stored = True
         except mysql.connector.errors.IntegrityError:
             print('{0}Object already in TB_MEDIA'.format(p_padding))
@@ -254,8 +253,11 @@ def getPostsFromPage(p_id):
             l_link, x       = getOptionalField(l_post, 'link')
             l_object_id, x  = getOptionalField(l_post, 'object_id')
             l_picture, x    = getOptionalField(l_post, 'picture')
-            l_place, x      = getOptionalField(l_post, 'place')
             l_source, x     = getOptionalField(l_post, 'source')
+
+            l_place = ''
+            if 'place' in l_post.keys():
+                l_place = json.dumps(l_post['place'])
 
             print('   name        :', l_nameShort)
             print('   caption     :', l_captionShort)
