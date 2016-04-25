@@ -17,6 +17,7 @@ from login_as import loginAs
 
 # ---------------------------------------------------- Globals ---------------------------------------------------------
 G_MAX_POST = 300                            # max number of posts retrieved from a page
+G_DAYS_DEPTH = 8                            # max number of days a post will be updated after its creation
 G_LIMIT = 100                               # number of elements retrieved in one request (API param)
 G_WAIT_FB = 60 * 60                         # wait period after a request limit hit (in seconds)
 
@@ -27,7 +28,7 @@ g_objectStored = 0                          # number of objects stored
 
 g_FBToken = None                            # current FB access token
 
-g_user = 'john.braekernell@yahoo.com'       # user name
+g_user = 'robert.braekernell@yahoo.com'     # user name
 g_pass = '15Eyyaka'                         # password
 
 g_errFile = None                            # log file for errors
@@ -184,7 +185,7 @@ def updateObject(p_id, p_shareCount, p_likeCount, p_name, p_caption, p_desc, p_s
         cleanForInsert(p_caption),
         cleanForInsert(p_desc),
         cleanForInsert(p_story),
-        cleanForInsert(p_message),
+        cleanForInsert(p_message)
     )
 
     # print(l_query)
@@ -218,7 +219,7 @@ def storeUser(p_id, p_name, p_date, p_padding):
         p_id,
         cleanForInsert(p_name),
         datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-        l_date,
+        l_date
     )
 
     # print(l_query)
@@ -229,6 +230,81 @@ def storeUser(p_id, p_name, p_date, p_padding):
         print('{0}User already known'.format(p_padding))
     except Exception as e:
         print('TB_USER Unknown Exception: {0}'.format(repr(e)))
+        print(l_query)
+        sys.exit()
+
+    l_cursor.close()
+
+def getUserInternalId(p_id):
+    l_cursor = g_connector.cursor(buffered=True)
+
+    l_retId = None
+    l_query = """
+        select `ID_INTERNAL`
+        from TB_USER
+        where `ID` =  "{0}"
+    """.format(p_id)
+
+    # print(l_query)
+    try:
+        l_cursor.execute(l_query)
+
+        for l_internalId, in l_cursor:
+            l_retId = l_internalId
+
+    except Exception as e:
+        print('TB_USER Unknown Exception: {0}'.format(repr(e)))
+        print(l_query)
+        sys.exit()
+
+    l_cursor.close()
+
+    return l_retId
+
+def creatLikeLink(p_userIdInternal, p_objIdInternal, p_date):
+    # date format: 2016-04-22T12:03:06+0000 ---> 2016-04-22 12:03:06
+    l_date = re.sub('T', ' ', p_date)
+    l_date = re.sub(r'\+\d+$', '', l_date)
+
+    l_cursor = g_connector.cursor()
+
+    l_query = """
+        INSERT INTO TB_LIKE(`ID_USER_INTERNAL`,`ID_OBJ_INTERNAL`,`DT_CRE`)
+        VALUES( "{0}", "{1}", "{2}" )
+    """.format(
+        p_userIdInternal,
+        p_objIdInternal,
+        l_date
+    )
+
+    # print(l_query)
+    try:
+        l_cursor.execute(l_query)
+        g_connector.commit()
+    except mysql.connector.errors.IntegrityError:
+        print('Like link already exists')
+    except Exception as e:
+        print('TB_LIKE Unknown Exception: {0}'.format(repr(e)))
+        print(l_query)
+        sys.exit()
+
+    l_cursor.close()
+
+def setLikeFlag(p_id):
+    l_cursor = g_connector.cursor()
+
+    l_query = """
+        update TB_OBJ
+        set `F_LIKE_DETAIL` = "X"
+        where `ID` = "{0}"
+    """.format(p_id)
+
+    # print(l_query)
+    try:
+        l_cursor.execute(l_query)
+        g_connector.commit()
+    except Exception as e:
+        print('TB_OBJ Unknown Exception: {0}'.format(repr(e)))
         print(l_query)
         sys.exit()
 
@@ -328,8 +404,8 @@ def getPostsFromPage(p_id):
                 re.sub(r'\+\d+$', '', l_postDate), '%Y-%m-%dT%H:%M:%S')
             print('   date (P):', l_msgDate)
 
-            # if message older than 8 days ---> break loop
-            if (l_msgDate - datetime.datetime.now()).days > 8:
+            # if message older than G_DAYS_DEPTH days ---> break loop
+            if (l_msgDate - datetime.datetime.now()).days > G_DAYS_DEPTH:
                 l_finished = True
                 break
 
@@ -509,17 +585,18 @@ def getComments(p_id, p_postId, p_pageId, p_depth):
 def updatePosts():
     l_cursor = g_connector.cursor(buffered=True)
 
-    # all posts not older than 8 days and not already updated in the last day
+    # all posts not older than G_DAYS_DEPTH days and not already updated in the last day
     l_query = """
-        SELECT `ID`, `ID_PAGE`
-        FROM `TB_OBJ`
-        WHERE
+        select `ID`, `ID_PAGE`
+        from `TB_OBJ`
+        where
             `ST_TYPE` = 'Post'
-            AND datediff( now() , `DT_CRE` ) < 8
+            and datediff( now() , `DT_CRE` ) <= {0}
             and (
                 `DT_LAST_UPDATE` is null
-            )	or datediff( now() , `DT_LAST_UPDATE` ) > 1
-    """
+            	or datediff( now() , `DT_LAST_UPDATE` ) > 1
+            )
+    """.format(G_DAYS_DEPTH)
     # print(l_query)
     try:
         l_cursor.execute(l_query)
@@ -568,6 +645,68 @@ def updatePosts():
 
             if updateObject(l_postId, l_shares, l_likeCount, l_name, l_caption, l_description, l_story, l_message):
                 getComments(l_postId, l_postId, l_pageId, 0)
+
+    except Exception as e:
+        print('Post Update Unknown Exception: {0}'.format(repr(e)))
+        print(l_query)
+        sys.exit()
+
+    l_cursor.close()
+
+def getLikesDetail():
+    l_cursor = g_connector.cursor(buffered=True)
+
+    # all non page objects older than G_DAYS_DEPTH days and not already processed
+    l_query = """
+        SELECT
+            `ID`, `ID_INTERNAL`, `DT_CRE`
+        FROM
+            `TB_OBJ`
+        WHERE
+            `ST_TYPE` != 'Page'
+            AND datediff(now(), `DT_CRE`) >= {0}
+            AND `F_LIKE_DETAIL` is null
+    """.format(G_DAYS_DEPTH)
+
+    try:
+        l_cursor.execute(l_query)
+
+        for l_id, l_internalId, l_dtMsg in l_cursor:
+            print(l_id, '--->')
+            # get post data
+
+            l_request = ('https://graph.facebook.com/{0}/{1}/likes?limit={2}&' +
+                         'access_token={3}').format(
+                G_API_VERSION, l_id, G_LIMIT, g_FBToken)
+            # print('   l_request:', l_request)
+            l_response = performRequest(l_request)
+
+            l_responseData = json.loads(l_response)
+            while True:
+                for l_liker in l_responseData['data']:
+                    l_likerId = l_liker['id']
+                    l_likerName = l_liker['name']
+
+                    l_dtMsgStr = l_dtMsg.strftime('%Y-%m-%dT%H:%M:%S+000')
+
+                    storeUser(l_likerId, l_likerName, l_dtMsgStr, '')
+
+                    l_likerInternalId = getUserInternalId(l_likerId)
+
+                    creatLikeLink(l_likerInternalId, l_internalId, l_dtMsgStr)
+
+                    print('[{0}/{1}] {2}'.format(l_likerId, l_likerInternalId, l_likerName))
+
+                if 'paging' in l_responseData.keys() and 'next' in l_responseData['paging'].keys():
+                    print('*** Getting next page ...')
+                    l_request = l_responseData['paging']['next']
+                    l_response = performRequest(l_request)
+
+                    l_responseData = json.loads(l_response)
+                else:
+                    break
+
+            setLikeFlag(l_id)
 
     except Exception as e:
         print('Post Update Unknown Exception: {0}'.format(repr(e)))
@@ -756,7 +895,7 @@ if __name__ == "__main__":
     print('|                                                            |')
     print('| Bulk facebook download of posts/comments                   |')
     print('|                                                            |')
-    print('| v. 1.2 - 25/04/2016                                        |')
+    print('| v. 1.3 - 25/04/2016                                        |')
     print('+------------------------------------------------------------+')
 
     g_errFile = open('FBWatchHTTPErrors.txt', 'w')
@@ -774,5 +913,7 @@ if __name__ == "__main__":
 
     # refresh posts not older than 8 days and not already updated in the past day
     updatePosts()
+
+    getLikesDetail()
 
     g_connector.close()
