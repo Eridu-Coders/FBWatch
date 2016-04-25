@@ -159,6 +159,51 @@ def storeObject(p_padding, p_type, p_date,
 
     return l_stored
 
+def updateObject(p_id, p_shareCount, p_likeCount, p_name, p_caption, p_desc, p_story, p_message):
+    l_stored = False
+
+    l_cursor = g_connector.cursor()
+
+    l_query = """
+        UPDATE TB_OBJ
+        SET
+            `N_LIKES` = {1}
+            ,`N_SHARES` = {2}
+            ,`TX_NAME` = "{3}"
+            ,`TX_CAPTION` = "{4}"
+            ,`TX_DESCRIPTION` = "{5}"
+            ,`TX_STORY` = "{6}"
+            ,`TX_MESSAGE` = "{7}"
+            ,`DT_LAST_UPDATE` = NOW()
+        WHERE `ID` = "{0}"
+    """.format(
+        p_id,
+        p_likeCount,
+        p_shareCount,
+        cleanForInsert(p_name),
+        cleanForInsert(p_caption),
+        cleanForInsert(p_desc),
+        cleanForInsert(p_story),
+        cleanForInsert(p_message),
+    )
+
+    # print(l_query)
+
+    try:
+        l_cursor.execute(l_query)
+        g_connector.commit()
+        l_stored = True
+    except mysql.connector.errors.IntegrityError:
+        print('Object Cannot be updated')
+    except Exception as e:
+        print('TB_OBJ Unknown Exception: {0}'.format(repr(e)))
+        print(l_query)
+        sys.exit()
+
+    l_cursor.close()
+
+    return l_stored
+
 def storeUser(p_id, p_name, p_date, p_padding):
     # date format: 2016-04-22T12:03:06+0000 ---> 2016-04-22 12:03:06
     l_date = re.sub('T', ' ', p_date)
@@ -201,6 +246,50 @@ def getOptionalField(p_json, p_field):
             l_valueShort = l_value
 
     return l_value, l_valueShort
+
+def getPages():
+    # list of likes from john.braekernell@yahoo.com --> starting point
+    l_request = 'https://graph.facebook.com/{0}/me/likes?access_token={1}'.format(
+        G_API_VERSION, g_FBToken)
+    l_response = performRequest(l_request)
+
+    #print('l_request:', l_request)
+
+    # each like is a page
+    l_responseData = json.loads(l_response)
+    l_finished = False
+    while not l_finished:
+        for l_liked in l_responseData['data']:
+            l_pageId = l_liked['id']
+            l_pageName = l_liked['name']
+            print('id   :', l_pageId)
+            print('name :', l_pageName)
+
+            # store page information
+            storeObject(
+                p_padding='',
+                p_type='Page',
+                p_FBType='Page',
+                p_id=l_pageId,
+                p_parentId='',
+                p_pageId='',
+                p_postId='',
+                p_date='',
+                p_likeCount=0,
+                p_shareCount=0,
+                p_name=l_pageName
+            )
+
+            # get posts from the page
+            getPostsFromPage(l_pageId)
+
+        if 'paging' in l_responseData.keys() and 'next' in l_responseData['paging'].keys():
+            l_request = l_responseData['paging']['next']
+            l_response = performRequest(l_request)
+
+            l_responseData = json.loads(l_response)
+        else:
+            l_finished = True
 
 def getPostsFromPage(p_id):
     # get list of posts in this page's feed
@@ -417,6 +506,76 @@ def getComments(p_id, p_postId, p_pageId, p_depth):
         else:
             break
 
+def updatePosts():
+    l_cursor = g_connector.cursor(buffered=True)
+
+    # all posts not older than 8 days and not already updated in the last day
+    l_query = """
+        SELECT `ID`, `ID_PAGE`
+        FROM `TB_OBJ`
+        WHERE
+            `ST_TYPE` = 'Post'
+            AND datediff( now() , `DT_CRE` ) < 8
+            and (
+                `DT_LAST_UPDATE` is null
+            )	or datediff( now() , `DT_LAST_UPDATE` ) > 1
+    """
+    # print(l_query)
+    try:
+        l_cursor.execute(l_query)
+
+        for l_postId, l_pageId in l_cursor:
+            # get post data
+            l_fieldList = 'id,created_time,from,story,message,' + \
+                          'caption,description,icon,link,name,object_id,picture,place,shares,source,type'
+
+            l_request = ('https://graph.facebook.com/{0}/{1}?limit={2}&' +
+                         'access_token={3}&fields={4}').format(
+                G_API_VERSION, l_postId, G_LIMIT, g_FBToken, l_fieldList)
+            # print('   l_request:', l_request)
+            l_response = performRequest(l_request)
+
+            l_responseData = json.loads(l_response)
+            l_shares = int(l_responseData['shares']['count']) if 'shares' in l_responseData.keys() else 0
+            print('===========================================================')
+            print('Post ID     :', l_postId)
+            print('shares      :', l_shares)
+
+            l_name, l_nameShort             = getOptionalField(l_responseData, 'name')
+            l_caption, l_captionShort       = getOptionalField(l_responseData, 'caption')
+            l_description, l_descriptionSh  = getOptionalField(l_responseData, 'description')
+            l_story, l_storyShort           = getOptionalField(l_responseData, 'story')
+            l_message, l_messageShort       = getOptionalField(l_responseData, 'message')
+
+            print('name        :', l_nameShort)
+            print('caption     :', l_captionShort)
+            print('description :', l_descriptionSh)
+            print('story       :', l_storyShort)
+            print('message     :', l_messageShort)
+
+            # get post likes
+            l_request = ('https://graph.facebook.com/{0}/{1}/likes?limit={2}&' +
+                         'access_token={3}&summary=true').format(
+                G_API_VERSION, l_postId, G_LIMIT, g_FBToken, l_fieldList)
+            # print('   l_request:', l_request)
+            l_response = performRequest(l_request)
+
+            l_responseData = json.loads(l_response)
+            l_likeCount = 0
+            if 'summary' in l_responseData.keys():
+                l_likeCount = int(l_responseData['summary']['total_count'])
+            print('likes       :', l_likeCount)
+
+            if updateObject(l_postId, l_shares, l_likeCount, l_name, l_caption, l_description, l_story, l_message):
+                getComments(l_postId, l_postId, l_pageId, 0)
+
+    except Exception as e:
+        print('Post Update Unknown Exception: {0}'.format(repr(e)))
+        print(l_query)
+        sys.exit()
+
+    l_cursor.close()
+
 # calls Facebook's HTTP API and traps errors if any
 def performRequest(p_request):
     global g_FBToken
@@ -597,7 +756,7 @@ if __name__ == "__main__":
     print('|                                                            |')
     print('| Bulk facebook download of posts/comments                   |')
     print('|                                                            |')
-    print('| v. 1.1 - 24/04/2016                                        |')
+    print('| v. 1.2 - 25/04/2016                                        |')
     print('+------------------------------------------------------------+')
 
     g_errFile = open('FBWatchHTTPErrors.txt', 'w')
@@ -610,48 +769,10 @@ if __name__ == "__main__":
 
     getFBToken()
 
-    # list of likes from john.braekernell@yahoo.com --> starting point
-    l_request = 'https://graph.facebook.com/{0}/me/likes?access_token={1}'.format(
-        G_API_VERSION, g_FBToken)
-    l_response = performRequest(l_request)
+    # get all post/comments from the liked pages of the queried user
+    getPages()
 
-    print('l_request:', l_request)
-
-    # each like is a page
-    l_responseData = json.loads(l_response)
-    l_finished = False
-    while not l_finished:
-        for l_liked in l_responseData['data']:
-
-            l_pageId = l_liked['id']
-            l_pageName = l_liked['name']
-            print('id   :', l_pageId)
-            print('name :', l_pageName)
-
-            # store page information
-            storeObject(
-                p_padding       ='',
-                p_type          ='Page',
-                p_FBType        ='Page',
-                p_id            =l_pageId,
-                p_parentId      ='',
-                p_pageId        ='',
-                p_postId        ='',
-                p_date          ='',
-                p_likeCount     =0,
-                p_shareCount    =0,
-                p_name          =l_pageName
-            )
-
-            # get posts from the page
-            getPostsFromPage(l_pageId)
-
-        if 'paging' in l_responseData.keys() and 'next' in l_responseData['paging'].keys():
-            l_request = l_responseData['paging']['next']
-            l_response = performRequest(l_request)
-
-            l_responseData = json.loads(l_response)
-        else:
-            l_finished = True
+    # refresh posts not older than 8 days and not already updated in the past day
+    updatePosts()
 
     g_connector.close()
