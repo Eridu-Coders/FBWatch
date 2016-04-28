@@ -760,7 +760,7 @@ def performRequest(p_request):
             if 'WWW-Authenticate' in l_headersDict.keys():
                 l_FBMessage = l_headersDict['WWW-Authenticate']
 
-                # Request limit reached
+                # Request limit reached --> wait G_WAIT_FB s and retry
                 if re.search(r'\(#17\) User request limit reached', l_FBMessage):
                     l_wait = G_WAIT_FB
                     printAndSave('{0} {1}\n{2}\n'.format(
@@ -772,6 +772,17 @@ def performRequest(p_request):
                     for i in range(int(l_wait / l_sleepPeriod)):
                         time.sleep(l_sleepPeriod)
                         l_request = renewTokenAndRequest(l_request)
+
+                # Unknown FB error --> wait 30 s and retry
+                if re.search(r'An unexpected error has occurred', l_FBMessage):
+                    l_wait = 30
+                    printAndSave('{0} {1}\n{2}\n'.format(
+                        'FB unknown error: ', l_FBMessage,
+                        'Waiting for {0} seconds'.format(l_wait)
+                    ))
+
+                    time.sleep(l_wait)
+                    l_request = renewTokenAndRequest(l_request)
 
                 # Session expired ---> nothing to do
                 elif re.search(r'Session has expired', l_FBMessage):
@@ -895,15 +906,15 @@ if __name__ == "__main__":
     print('|                                                            |')
     print('| Bulk facebook download of posts/comments                   |')
     print('|                                                            |')
-    print('| v. 1.3 - 25/04/2016                                        |')
+    print('| v. 1.5 - 28/04/2016                                        |')
     print('+------------------------------------------------------------+')
 
     g_errFile = open('FBWatchHTTPErrors.txt', 'w')
 
     g_connector = mysql.connector.connect(
         user='root',
-        password='TNScrape',
-        host='localhost',
+        password='murugan!',
+        host='192.168.0.52',
         database='FBWatch')
 
     getFBToken()
