@@ -28,8 +28,8 @@ g_objectStored = 0                          # number of objects stored
 
 g_FBToken = None                            # current FB access token
 
-g_user = 'robert.braekernell@yahoo.com'     # user name
-g_pass = '15Eyyaka'                         # password
+g_user = 'kabir.eridu@gmail.com'            # user name
+g_pass = '12Alhamdulillah'                  # password
 
 g_errFile = None                            # log file for errors
 
@@ -69,7 +69,10 @@ def storeObject(p_padding, p_type, p_date,
 
     # date format: 2016-04-22T12:03:06+0000 ---> 2016-04-22 12:03:06
     l_date = re.sub('T', ' ', p_date)
-    l_date = re.sub(r'\+\d+$', '', l_date)
+    l_date = re.sub(r'\+\d+$', '', l_date).strip()
+
+    if len(l_date) == 0:
+        l_date = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
     l_cursor = g_connector.cursor()
 
@@ -899,6 +902,17 @@ def getFBToken():
         print('Cannot obtain FB Token for:', g_user)
         sys.exit()
 
+# Calls a "what is my Ip" web service to get own IP
+def getOwnIp():
+    # http://icanhazip.com/
+    l_myIp = None
+    try:
+        l_myIp = urllib.request.urlopen('http://icanhazip.com/').read().decode('utf-8').strip()
+    except urllib.error.URLError as e:
+        print('Cannot Open Own IP service:', repr(e))
+
+    return l_myIp
+
 # ---------------------------------------------------- Main section ----------------------------------------------------
 if __name__ == "__main__":
     print('+------------------------------------------------------------+')
@@ -906,12 +920,21 @@ if __name__ == "__main__":
     print('|                                                            |')
     print('| Bulk facebook download of posts/comments                   |')
     print('|                                                            |')
-    print('| v. 1.5 - 28/04/2016                                        |')
+    print('| v. 1.6 - 29/04/2016                                        |')
     print('+------------------------------------------------------------+')
+
+    # make sure that VPN is off
+    l_ownIp = getOwnIp()
+    print('l_ownIp:', l_ownIp)
+    if l_ownIp != '88.182.132.226':
+        print('VPN ?')
+        sys.exit()
 
     g_errFile = open('FBWatchHTTPErrors.txt', 'w')
 
+    # sql_mode='NO_ENGINE_SUBSTITUTION' because of new Utf8 controls in 16.04 MySQL
     g_connector = mysql.connector.connect(
+        sql_mode='NO_ENGINE_SUBSTITUTION',
         user='root',
         password='murugan!',
         host='192.168.0.52',

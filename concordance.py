@@ -29,6 +29,8 @@ g_connectorOriginWrite = None
 g_tldRe = []
 g_contractionRe = []
 
+g_exclude = []
+
 g_contractions = {
     "he ain't": "he is not",
     "I ain't": "I am not",
@@ -46,6 +48,7 @@ g_contractions = {
     "didn't": "did not",
     "doesn't": "does not",
     "don't": "do not",
+    "gonna": "going to",
     "hadn't": "had not",
     "hadn't've": "had not have",
     "hasn't": "has not",
@@ -151,7 +154,9 @@ g_contractions = {
     "you'll": "you will",
     "you'll've": "you will have",
     "you're": "you are",
-    "you've": "you have"
+    "you've": "you have",
+    "``": "\"",
+    "''": "\""
 }
 # ---------------------------------------------------- Functions -------------------------------------------------------
 def cleanForInsert(s):
@@ -163,8 +168,14 @@ def cleanForInsert(s):
 def storeConc(p_idObjInternal, p_before, p_word, p_lemma, p_tag, p_after, p_context):
     l_lenLimit = 50
 
-    if len(p_word) > l_lenLimit or len(p_lemma) > l_lenLimit:
+    if len(p_word) > l_lenLimit or len(p_lemma) > l_lenLimit or len(p_lemma) == 0:
         return
+
+    l_lemma = p_lemma
+    # removes single quote at begining of word if word longer than 1 character
+    # ---> keeps "'s" but removes "'hello"
+    if l_lemma[0] == "'" and len(l_lemma) > 2:
+        l_lemma = l_lemma[1:]
 
     l_cursor = g_connectorWrite.cursor()
     l_query = """
@@ -174,7 +185,7 @@ def storeConc(p_idObjInternal, p_before, p_word, p_lemma, p_tag, p_after, p_cont
         p_idObjInternal,
         cleanForInsert(p_before),
         cleanForInsert(p_word),
-        cleanForInsert(p_lemma),
+        cleanForInsert(l_lemma),
         cleanForInsert(p_tag),
         cleanForInsert(p_after),
         cleanForInsert(json.dumps(p_context))
@@ -210,6 +221,39 @@ def flagDone(p_idObjInternal):
 
     l_cursor.close()
 
+def loadExclude():
+    global g_exclude
+
+    l_cursor = g_connectorRead.cursor(buffered=True)
+
+    # read non page objects from TB_OBJ in 100 row batches
+    l_query = """
+                SELECT `ST_LEMMA`, `ST_TAG`
+                FROM `TB_EXCLUDE`
+                WHERE `F_EXCLUDE` is not null
+            """
+    try:
+        l_cursor.execute(l_query)
+
+        for l_lemma, l_tag in l_cursor:
+            if l_tag == 'v':
+                l_tagMark ='-V'
+            else:
+                l_tagMark = ''
+
+            if l_lemma.lower() != l_lemma:
+                g_exclude += [l_lemma.lower() + l_tagMark]
+
+            g_exclude += [l_lemma + l_tagMark]
+
+    except Exception as e:
+        print('TB_CONCORD Unknown Exception: {0}'.format(repr(e)))
+        print(l_query)
+        sys.exit()
+
+    print(g_exclude)
+    l_cursor.close()
+
 def cleanText(p_t1, p_t2, p_t3, p_t4, p_t5, p_verbose=False):
     l_concat = '{0}¤¤¤xXx¤¤¤{1}¤¤¤xXx¤¤¤{2}¤¤¤xXx¤¤¤{3}¤¤¤xXx¤¤¤{4}¤¤¤xXx¤¤¤' \
         .format(p_t1, p_t2, p_t3, p_t4, p_t5)
@@ -231,6 +275,10 @@ def cleanText(p_t1, p_t2, p_t3, p_t4, p_t5, p_verbose=False):
     l_concat = re.sub(r':D', '¤¤¤SMILEY6¤¤¤', l_concat)
     l_concat = re.sub(r';-D', '¤¤¤SMILEY5¤¤¤', l_concat)
     l_concat = re.sub(r':-D', '¤¤¤SMILEY6¤¤¤', l_concat)
+    l_concat = re.sub(r';P', '¤¤¤SMILEY7¤¤¤', l_concat)
+    l_concat = re.sub(r':P', '¤¤¤SMILEY8¤¤¤', l_concat)
+    l_concat = re.sub(r';-P', '¤¤¤SMILEY9¤¤¤', l_concat)
+    l_concat = re.sub(r':-P', '¤¤¤SMILEY10¤¤¤', l_concat)
 
     if p_verbose:
         print('2:', l_concat)
@@ -280,6 +328,10 @@ def cleanText(p_t1, p_t2, p_t3, p_t4, p_t5, p_verbose=False):
     l_concat = re.sub('¤¤¤SMILEY4¤¤¤', ':))', l_concat)
     l_concat = re.sub('¤¤¤SMILEY5¤¤¤', ';-D', l_concat)
     l_concat = re.sub('¤¤¤SMILEY6¤¤¤', ':-D', l_concat)
+    l_concat = re.sub('¤¤¤SMILEY7¤¤¤', ';P', l_concat)
+    l_concat = re.sub('¤¤¤SMILEY8¤¤¤', ':P', l_concat)
+    l_concat = re.sub('¤¤¤SMILEY9¤¤¤', ';-P', l_concat)
+    l_concat = re.sub('¤¤¤SMILEY10¤¤¤', ':-P', l_concat)
     l_concat = re.sub('¤¤¤DOT¤¤¤', '.', l_concat)
 
     l_concat = re.sub('¤¤¤HTTP¤¤¤', r'http://', l_concat)
@@ -339,29 +391,48 @@ if __name__ == "__main__":
     print('|                                                            |')
     print('| Build concordance from object texts                        |')
     print('|                                                            |')
-    print('| v. 1.1 - 28/04/2016                                        |')
+    print('| v. 1.2 - 29/04/2016                                        |')
     print('+------------------------------------------------------------+')
+
+    l_verbose = False
 
     compileRe()
 
+    #user = 'root',
+    #password = 'murugan!',
+    #host = '192.168.0.52',
+    #database = 'FBWatch'
+
+    #user = 'root',
+    #password = 'TNScrape',
+    #host = 'localhost',
+    #database = 'FBWatch'
+
+    # sql_mode='NO_ENGINE_SUBSTITUTION' because of new Utf8 controls in 16.04 MySQL
+
     # used to read from TB_OBJ
     g_connectorRead = mysql.connector.connect(
-        user='root',
-        password='murugan!',
-        host='192.168.0.52',
+        sql_mode='NO_ENGINE_SUBSTITUTION',
+        user = 'root',
+        password = 'murugan!',
+        host = '192.168.0.52',
         database='FBWatch')
     # used to write back to TB_OBJ (F_WORD_SPLIT update)
     g_connectorOriginWrite = mysql.connector.connect(
-        user='root',
-        password='murugan!',
-        host='192.168.0.52',
+        sql_mode='NO_ENGINE_SUBSTITUTION',
+        user = 'root',
+        password = 'murugan!',
+        host = '192.168.0.52',
         database='FBWatch')
     # used to write to TB_CONCORD
     g_connectorWrite = mysql.connector.connect(
-        user='root',
-        password='murugan!',
-        host='192.168.0.52',
+        sql_mode='NO_ENGINE_SUBSTITUTION',
+        user = 'root',
+        password = 'murugan!',
+        host = '192.168.0.52',
         database='FBWatch')
+
+    loadExclude()
 
     l_finished = False
     while not l_finished:
@@ -429,7 +500,8 @@ if __name__ == "__main__":
 
                     l_sPunct = l_sPunct[::-1]
 
-                    print('   +++++++++++++++++++++++')
+                    if l_verbose:
+                        print('   +++++++++++++++++++++++')
                     i = 0
                     r = 3
                     for w in l_sPunct:
@@ -452,19 +524,34 @@ if __name__ == "__main__":
                         l_before = ' '.join([x[0] for x in l_segBefore])
                         l_after = ' '.join([x[0] for x in l_segAfter])
 
-                        print('   {0:<30} {1:<20} {2:<30}'.format(l_before, w[0], l_after), l_segAfter)
-                        storeConc(l_idInternal, l_before, w[0], w[1].lower(), w[2], l_after,
-                                  (l_segBefore, w, l_segAfter))
+                        # append a marker to verbs only ('MD' indicates modal verbs like 'could', 'would', etc.)
+                        if w[2][0] == 'V' or w[2] == 'MD':
+                            l_testWord = w[1].lower() + '-V'
+                        else:
+                            l_testWord = w[1].lower()
+
+                        if l_verbose:
+                            print('   {0:<30} {1} {2:<20} {3:<30} {4}'.format(
+                                l_before,
+                                '*' if l_testWord in g_exclude else ' ',
+                                w[0],
+                                l_after,
+                                l_segAfter))
+
+                        if l_testWord not in g_exclude:
+                            storeConc(l_idInternal, l_before, w[0], w[1].lower(), w[2], l_after,
+                                      (l_segBefore, w, l_segAfter))
 
                         i += 1
 
-                print('--------------------------------------------------')
-                print('l_type       :', l_type)
-                print('l_name       :', l_name)
-                print('l_caption    :', l_caption)
-                print('l_description:', l_description)
-                print('l_story      :', l_story)
-                print('l_message    :', l_message)
+                if l_verbose:
+                    print('--------------------------------------------------')
+                    print('l_type       :', l_type)
+                    print('l_name       :', l_name)
+                    print('l_caption    :', l_caption)
+                    print('l_description:', l_description)
+                    print('l_story      :', l_story)
+                    print('l_message    :', l_message)
 
                 # Mark this object as done
                 flagDone(l_idInternal)
