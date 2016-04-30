@@ -776,16 +776,26 @@ def performRequest(p_request):
                         time.sleep(l_sleepPeriod)
                         l_request = renewTokenAndRequest(l_request)
 
-                # Unknown FB error --> wait 30 s and retry
+                # Unknown FB error --> wait 30 s and retry 5 times max
                 if re.search(r'An unexpected error has occurred', l_FBMessage):
-                    l_wait = 30
-                    printAndSave('{0} {1}\n{2}\n'.format(
-                        'FB unknown error: ', l_FBMessage,
-                        'Waiting for {0} seconds'.format(l_wait)
-                    ))
+                    if l_errCount < 5:
+                        l_wait = 30
+                        printAndSave('{0} {1}\n{2}\n'.format(
+                            'FB unknown error: ', l_FBMessage,
+                            'Waiting for {0} seconds'.format(l_wait)
+                        ))
 
-                    time.sleep(l_wait)
-                    l_request = renewTokenAndRequest(l_request)
+                        time.sleep(l_wait)
+                        l_request = renewTokenAndRequest(l_request)
+                    else:
+                        l_response = '{"data": []}'
+
+                        printAndSave('{0} {1}\n{2}\n'.format(
+                            'FB unknown error: ', l_FBMessage,
+                            'Returned: {0}'.format(l_response)
+                        ))
+
+                        l_finished = True
 
                 # Session expired ---> nothing to do
                 elif re.search(r'Session has expired', l_FBMessage):
