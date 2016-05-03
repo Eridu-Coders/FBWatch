@@ -16,8 +16,9 @@ import mysql.connector
 from login_as import loginAs
 
 # ---------------------------------------------------- Globals ---------------------------------------------------------
-G_MAX_POST = 300                            # max number of posts retrieved from a page
-G_DAYS_DEPTH = 8                            # max number of days a post will be updated after its creation
+G_MAX_POST = 500                            # max number of posts retrieved from a page
+G_DAYS_DEPTH = 14                           # max number of days a post will be updated after its creation
+G_LIKES_DEPTH = 8                           # number of days after which the detailed liked list of a post will be fetched
 G_LIMIT = 100                               # number of elements retrieved in one request (API param)
 G_WAIT_FB = 60 * 60                         # wait period after a request limit hit (in seconds)
 
@@ -617,7 +618,7 @@ def updatePosts():
 
             l_responseData = json.loads(l_response)
             l_shares = int(l_responseData['shares']['count']) if 'shares' in l_responseData.keys() else 0
-            print('===========================================================')
+            print('============= UPDATE ==============================================')
             print('Post ID     :', l_postId)
             print('shares      :', l_shares)
 
@@ -659,7 +660,7 @@ def updatePosts():
 def getLikesDetail():
     l_cursor = g_connector.cursor(buffered=True)
 
-    # all non page objects older than G_DAYS_DEPTH days and not already processed
+    # all non page objects older than G_LIKES_DEPTH days and not already processed
     l_query = """
         SELECT
             `ID`, `ID_INTERNAL`, `DT_CRE`
@@ -669,7 +670,7 @@ def getLikesDetail():
             `ST_TYPE` != 'Page'
             AND datediff(now(), `DT_CRE`) >= {0}
             AND `F_LIKE_DETAIL` is null
-    """.format(G_DAYS_DEPTH)
+    """.format(G_LIKES_DEPTH)
 
     try:
         l_cursor.execute(l_query)
@@ -930,7 +931,7 @@ if __name__ == "__main__":
     print('|                                                            |')
     print('| Bulk facebook download of posts/comments                   |')
     print('|                                                            |')
-    print('| v. 1.6 - 29/04/2016                                        |')
+    print('| v. 1.7 - 02/05/2016                                        |')
     print('+------------------------------------------------------------+')
 
     # make sure that VPN is off
