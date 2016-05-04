@@ -6,7 +6,8 @@ __author__ = 'fi11222'
 import sys
 import re
 
-import mysql.connector
+#import mysql.connector
+import psycopg2
 
 # ---------------------------------------------------- Main ------------------------------------------------------------
 if __name__ == "__main__":
@@ -15,31 +16,30 @@ if __name__ == "__main__":
     print('|                                                            |')
     print('| updates post ---> themes table                             |')
     print('|                                                            |')
-    print('| v. 1.0 - 30/04/2016                                        |')
+    print('| v. 2.0 - 04/05/2016                                        |')
+    print('| --> migrated to PostgreSQL                                 |')
     print('+------------------------------------------------------------+')
 
     l_verbose = False
 
     # used to read from TB_THEME
-    g_connectorRead = mysql.connector.connect(
-        sql_mode='NO_ENGINE_SUBSTITUTION',
-        user = 'root',
-        password = 'murugan!',
-        host = '192.168.0.52',
-        database='FBWatch')
+    g_connectorRead = psycopg2.connect(
+        host='192.168.0.52',
+        database="FBWatch",
+        user="postgres",
+        password="murugan!")
     # used to write to TB_WORD_THEME
-    g_connectorWrite = mysql.connector.connect(
-        sql_mode='NO_ENGINE_SUBSTITUTION',
-        user = 'root',
-        password = 'murugan!',
-        host = '192.168.0.52',
-        database='FBWatch')
+    g_connectorWrite = psycopg2.connect(
+        host='192.168.0.52',
+        database="FBWatch",
+        user="postgres",
+        password="murugan!")
 
-    l_cursor = g_connectorRead.cursor(buffered=True)
+    l_cursor = g_connectorRead.cursor()
 
     # read non page objects from TB_OBJ in 100 row batches
     l_query = """
-        SELECT * from TB_THEME;
+        SELECT * from "FBWatch"."TB_THEME";
     """
 
     try:
@@ -54,6 +54,30 @@ if __name__ == "__main__":
             if l_match:
                 l_qId = l_match.group(1)
                 print('l_qId    :', l_qId)
+
+                l_qUpdate = re.sub(r'into\s+`(\w+)`\s+\(', r'into "FBWatch"."\1" (', l_qUpdate, flags=re.IGNORECASE)
+                l_qUpdate = re.sub(r'FROM\s+`(\w+)`', r'from "FBWatch"."\1"', l_qUpdate, flags=re.IGNORECASE)
+                l_qUpdate = re.sub(r'`', r'"', l_qUpdate)
+                l_qUpdate = re.sub(r"\\'", r"''", l_qUpdate)
+
+                l_query = """
+                    update "FBWatch"."TB_THEME"
+                    set "TX_REQUEST" = '{0}'
+                    where "ID" = {1};
+                """.format(
+                    re.sub("'", "''", l_qUpdate), l_qId
+                )
+                # execute update query
+                l_curWrite = g_connectorWrite.cursor()
+                try:
+                    l_curWrite.execute(l_query)
+                    g_connectorWrite.commit()
+                except Exception as e:
+                    print('TB_THEME Unknown Exception: {0}'.format(repr(e)))
+                    print(l_query)
+                    sys.exit()
+
+                l_curWrite.close()
                 print('l_qUpdate:', l_qUpdate)
 
                 if int(l_id) != int(l_qId):
@@ -61,7 +85,7 @@ if __name__ == "__main__":
                     sys.exit()
 
                 l_qCleanup = """
-                    delete from TB_WORD_THEME where ID_THEME = {0};
+                    delete from "FBWatch"."TB_WORD_THEME" where "ID_THEME" = {0};
                 """.format(l_id)
 
                 # execute cleanup query
@@ -71,7 +95,7 @@ if __name__ == "__main__":
                     g_connectorWrite.commit()
                 except Exception as e:
                     print('TB_WORD_THEME Unknown Exception: {0}'.format(repr(e)))
-                    print(l_query)
+                    print(l_qCleanup)
                     sys.exit()
 
                 l_curWrite.close()
@@ -83,7 +107,7 @@ if __name__ == "__main__":
                     g_connectorWrite.commit()
                 except Exception as e:
                     print('TB_WORD_THEME Unknown Exception: {0}'.format(repr(e)))
-                    print(l_query)
+                    print(l_qUpdate)
                     sys.exit()
 
                 l_curWrite.close()

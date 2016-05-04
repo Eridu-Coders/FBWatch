@@ -247,7 +247,7 @@ def loadExclude():
             g_exclude += [l_lemma + l_tagMark]
 
     except Exception as e:
-        print('TB_CONCORD Unknown Exception: {0}'.format(repr(e)))
+        print('TB_EXCLUDE Unknown Exception: {0}'.format(repr(e)))
         print(l_query)
         sys.exit()
 
