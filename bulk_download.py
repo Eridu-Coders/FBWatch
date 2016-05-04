@@ -18,7 +18,7 @@ from login_as import loginAs
 # ---------------------------------------------------- Globals ---------------------------------------------------------
 G_MAX_POST = 500                            # max number of posts retrieved from a page
 G_DAYS_DEPTH = 14                           # max number of days a post will be updated after its creation
-G_LIKES_DEPTH = 0                           # number of days after which the detailed liked list of a post will be fetched
+G_LIKES_DEPTH = 8                           # number of days after which the detailed liked list of a post will be fetched
 G_LIMIT = 100                               # number of elements retrieved in one request (API param)
 G_WAIT_FB = 60 * 60                         # wait period after a request limit hit (in seconds)
 
@@ -35,7 +35,7 @@ g_pass = '12Alhamdulillah'                  # password
 g_errFile = None                            # log file for errors
 
 g_FBRequestCount = 0                        # number of requests performed
-G_TOKEN_LIFESPAN = 500                      # number of requests after which the token must be renewed
+G_TOKEN_LIFESPAN = 3000                     # number of requests after which the token must be renewed
 
 G_API_VERSION = 'v2.6'                      # version of the FB API used
 
@@ -611,7 +611,7 @@ def updatePosts():
                 or DATE_PART('day', now()::date - "DT_LAST_UPDATE") >= 1
             )
     """.format(G_DAYS_DEPTH)
-    print(l_query)
+    # print(l_query)
 
     try:
         l_cursor.execute(l_query)
@@ -682,7 +682,7 @@ def getLikesDetail():
             AND DATE_PART('day', now()::date - "DT_CRE") >= {0}
             AND "F_LIKE_DETAIL" is null
     """.format(G_LIKES_DEPTH)
-    print(l_query)
+    # print(l_query)
 
     try:
         l_cursor.execute(l_query)
