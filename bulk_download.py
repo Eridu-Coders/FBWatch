@@ -11,14 +11,14 @@ import time
 import sys
 import datetime
 
-import mysql.connector
+import psycopg2
 
 from login_as import loginAs
 
 # ---------------------------------------------------- Globals ---------------------------------------------------------
 G_MAX_POST = 500                            # max number of posts retrieved from a page
 G_DAYS_DEPTH = 14                           # max number of days a post will be updated after its creation
-G_LIKES_DEPTH = 8                           # number of days after which the detailed liked list of a post will be fetched
+G_LIKES_DEPTH = 0                           # number of days after which the detailed liked list of a post will be fetched
 G_LIMIT = 100                               # number of elements retrieved in one request (API param)
 G_WAIT_FB = 60 * 60                         # wait period after a request limit hit (in seconds)
 
@@ -41,8 +41,8 @@ G_API_VERSION = 'v2.6'                      # version of the FB API used
 
 # ---------------------------------------------------- Functions -------------------------------------------------------
 def cleanForInsert(s):
-    r = re.sub('"', '""', s)
-    r = re.sub(r'\\', r'\\\\', r)
+    r = re.sub("'", "''", s)
+    # r = re.sub(r'\\', r'\\\\', r)
 
     return r
 
@@ -78,26 +78,26 @@ def storeObject(p_padding, p_type, p_date,
     l_cursor = g_connector.cursor()
 
     l_query = """
-        INSERT INTO TB_OBJ(
-            `ID`
-            ,`ID_FATHER`
-            ,`ID_PAGE`
-            ,`ID_POST`
-            ,`DT_CRE`
-            ,`ST_TYPE`
-            ,`ST_FB_TYPE`
-            ,`TX_NAME`
-            ,`TX_CAPTION`
-            ,`TX_DESCRIPTION`
-            ,`TX_STORY`
-            ,`TX_MESSAGE`
-            ,`ID_USER`
-            ,`N_LIKES`
-            ,`N_SHARES`
-            ,`TX_PLACE`)
+        INSERT INTO "FBWatch"."TB_OBJ"(
+            "ID"
+            ,"ID_FATHER"
+            ,"ID_PAGE"
+            ,"ID_POST"
+            ,"DT_CRE"
+            ,"ST_TYPE"
+            ,"ST_FB_TYPE"
+            ,"TX_NAME"
+            ,"TX_CAPTION"
+            ,"TX_DESCRIPTION"
+            ,"TX_STORY"
+            ,"TX_MESSAGE"
+            ,"ID_USER"
+            ,"N_LIKES"
+            ,"N_SHARES"
+            ,"TX_PLACE")
         VALUES(
-            "{0}", "{1}", "{2}",  "{3}",  "{4}",  "{5}", "{6}", "{7}",
-            "{8}", "{9}", "{10}", "{11}", "{12}", {13},  {14},  "{15}" )
+            '{0}', '{1}', '{2}',  '{3}',  '{4}',  '{5}', '{6}', '{7}',
+            '{8}', '{9}', '{10}', '{11}', '{12}', {13},  {14},  '{15}' )
     """.format(
         p_id,
         p_parentId,
@@ -124,8 +124,10 @@ def storeObject(p_padding, p_type, p_date,
         g_connector.commit()
         g_objectStored += 1
         l_stored = True
-    except mysql.connector.errors.IntegrityError:
+    except psycopg2.IntegrityError as e:
         print('{0}Object already in TB_OBJ'.format(p_padding))
+        #print('{0}PostgreSQL: {1}'.format(p_padding, e))
+        g_connector.rollback()
     except Exception as e:
         print('TB_OBJ Unknown Exception: {0}'.format(repr(e)))
         print(l_query)
@@ -134,8 +136,8 @@ def storeObject(p_padding, p_type, p_date,
     # store media if any
     if len(p_link + p_picture + p_raw + p_source) > 0:
         l_query = """
-            INSERT INTO TB_MEDIA(`ID_OWNER`,`TX_URL_LINK`,`TX_SRC_PICTURE`,`TX_RAW`)
-            VALUES("{0}", "{1}", "{2}",  "{3}")
+            INSERT INTO "FBWatch"."TB_MEDIA"("ID_OWNER","TX_URL_LINK","TX_SRC_PICTURE","TX_RAW")
+            VALUES('{0}', '{1}', '{2}',  '{3}')
         """.format(
             p_id,
             cleanForInsert(p_link),
@@ -150,8 +152,10 @@ def storeObject(p_padding, p_type, p_date,
             l_cursor.execute(l_query)
             g_connector.commit()
             l_stored = True
-        except mysql.connector.errors.IntegrityError:
+        except psycopg2.IntegrityError as e:
             print('{0}Object already in TB_MEDIA'.format(p_padding))
+            #print('{0}PostgreSQL: {1}'.format(p_padding, e))
+            g_connector.rollback()
         except Exception as e:
             print('TB_MEDIA Unknown Exception: {0}'.format(repr(e)))
             print(l_query)
@@ -170,17 +174,17 @@ def updateObject(p_id, p_shareCount, p_likeCount, p_name, p_caption, p_desc, p_s
     l_cursor = g_connector.cursor()
 
     l_query = """
-        UPDATE TB_OBJ
+        UPDATE "FBWatch"."TB_OBJ"
         SET
-            `N_LIKES` = {1}
-            ,`N_SHARES` = {2}
-            ,`TX_NAME` = "{3}"
-            ,`TX_CAPTION` = "{4}"
-            ,`TX_DESCRIPTION` = "{5}"
-            ,`TX_STORY` = "{6}"
-            ,`TX_MESSAGE` = "{7}"
-            ,`DT_LAST_UPDATE` = NOW()
-        WHERE `ID` = "{0}"
+            "N_LIKES" = {1}
+            ,"N_SHARES" = {2}
+            ,"TX_NAME" = '{3}'
+            ,"TX_CAPTION" = '{4}'
+            ,"TX_DESCRIPTION" = '{5}'
+            ,"TX_STORY" = '{6}'
+            ,"TX_MESSAGE" = '{7}'
+            ,"DT_LAST_UPDATE" = CURRENT_TIMESTAMP
+        WHERE "ID" = '{0}'
     """.format(
         p_id,
         p_likeCount,
@@ -198,8 +202,10 @@ def updateObject(p_id, p_shareCount, p_likeCount, p_name, p_caption, p_desc, p_s
         l_cursor.execute(l_query)
         g_connector.commit()
         l_stored = True
-    except mysql.connector.errors.IntegrityError:
+    except psycopg2.IntegrityError as e:
         print('Object Cannot be updated')
+        #print('PostgreSQL: {0}'.format(e))
+        g_connector.rollback()
     except Exception as e:
         print('TB_OBJ Unknown Exception: {0}'.format(repr(e)))
         print(l_query)
@@ -217,8 +223,8 @@ def storeUser(p_id, p_name, p_date, p_padding):
     l_cursor = g_connector.cursor()
 
     l_query = """
-        INSERT INTO TB_USER(`ID`, `ST_NAME`, `DT_CRE`, `DT_MSG`)
-        VALUES( "{0}", "{1}", "{2}", "{3}" )
+        INSERT INTO "FBWatch"."TB_USER"("ID", "ST_NAME", "DT_CRE", "DT_MSG")
+        VALUES( '{0}', '{1}', '{2}', '{3}' )
     """.format(
         p_id,
         cleanForInsert(p_name),
@@ -230,8 +236,10 @@ def storeUser(p_id, p_name, p_date, p_padding):
     try:
         l_cursor.execute(l_query)
         g_connector.commit()
-    except mysql.connector.errors.IntegrityError:
+    except psycopg2.IntegrityError as e:
         print('{0}User already known'.format(p_padding))
+        #print('{0}PostgreSQL: {1}'.format(p_padding, e))
+        g_connector.rollback()
     except Exception as e:
         print('TB_USER Unknown Exception: {0}'.format(repr(e)))
         print(l_query)
@@ -240,13 +248,13 @@ def storeUser(p_id, p_name, p_date, p_padding):
     l_cursor.close()
 
 def getUserInternalId(p_id):
-    l_cursor = g_connector.cursor(buffered=True)
+    l_cursor = g_connector.cursor()
 
     l_retId = None
     l_query = """
-        select `ID_INTERNAL`
-        from TB_USER
-        where `ID` =  "{0}"
+        select "ID_INTERNAL"
+        from "FBWatch"."TB_USER"
+        where "ID" =  '{0}'
     """.format(p_id)
 
     # print(l_query)
@@ -273,8 +281,8 @@ def creatLikeLink(p_userIdInternal, p_objIdInternal, p_date):
     l_cursor = g_connector.cursor()
 
     l_query = """
-        INSERT INTO TB_LIKE(`ID_USER_INTERNAL`,`ID_OBJ_INTERNAL`,`DT_CRE`)
-        VALUES( "{0}", "{1}", "{2}" )
+        INSERT INTO "FBWatch"."TB_LIKE"("ID_USER_INTERNAL","ID_OBJ_INTERNAL","DT_CRE")
+        VALUES( '{0}', '{1}', '{2}' )
     """.format(
         p_userIdInternal,
         p_objIdInternal,
@@ -285,8 +293,10 @@ def creatLikeLink(p_userIdInternal, p_objIdInternal, p_date):
     try:
         l_cursor.execute(l_query)
         g_connector.commit()
-    except mysql.connector.errors.IntegrityError:
+    except psycopg2.IntegrityError as e:
         print('Like link already exists')
+        #print('PostgreSQL: {0}'.format(e))
+        g_connector.rollback()
     except Exception as e:
         print('TB_LIKE Unknown Exception: {0}'.format(repr(e)))
         print(l_query)
@@ -298,9 +308,9 @@ def setLikeFlag(p_id):
     l_cursor = g_connector.cursor()
 
     l_query = """
-        update TB_OBJ
-        set `F_LIKE_DETAIL` = "X"
-        where `ID` = "{0}"
+        update "FBWatch"."TB_OBJ"
+        set "F_LIKE_DETAIL" = 'X'
+        where "ID" = '{0}'
     """.format(p_id)
 
     # print(l_query)
@@ -587,21 +597,22 @@ def getComments(p_id, p_postId, p_pageId, p_depth):
             break
 
 def updatePosts():
-    l_cursor = g_connector.cursor(buffered=True)
+    l_cursor = g_connector.cursor()
 
     # all posts not older than G_DAYS_DEPTH days and not already updated in the last day
     l_query = """
-        select `ID`, `ID_PAGE`
-        from `TB_OBJ`
+        select "ID", "ID_PAGE"
+        from "FBWatch"."TB_OBJ"
         where
-            `ST_TYPE` = 'Post'
-            and datediff( now() , `DT_CRE` ) <= {0}
+            "ST_TYPE" = 'Post'
+            and DATE_PART('day', now()::date - "DT_CRE") <= {0}
             and (
-                `DT_LAST_UPDATE` is null
-            	or datediff( now() , `DT_LAST_UPDATE` ) > 1
+                "DT_LAST_UPDATE" is null
+                or DATE_PART('day', now()::date - "DT_LAST_UPDATE") >= 1
             )
     """.format(G_DAYS_DEPTH)
-    # print(l_query)
+    print(l_query)
+
     try:
         l_cursor.execute(l_query)
 
@@ -658,19 +669,20 @@ def updatePosts():
     l_cursor.close()
 
 def getLikesDetail():
-    l_cursor = g_connector.cursor(buffered=True)
+    l_cursor = g_connector.cursor()
 
     # all non page objects older than G_LIKES_DEPTH days and not already processed
     l_query = """
         SELECT
-            `ID`, `ID_INTERNAL`, `DT_CRE`
+            "ID", "ID_INTERNAL", "DT_CRE"
         FROM
-            `TB_OBJ`
+            "FBWatch"."TB_OBJ"
         WHERE
-            `ST_TYPE` != 'Page'
-            AND datediff(now(), `DT_CRE`) >= {0}
-            AND `F_LIKE_DETAIL` is null
+            "ST_TYPE" != 'Page'
+            AND DATE_PART('day', now()::date - "DT_CRE") >= {0}
+            AND "F_LIKE_DETAIL" is null
     """.format(G_LIKES_DEPTH)
+    print(l_query)
 
     try:
         l_cursor.execute(l_query)
@@ -931,7 +943,8 @@ if __name__ == "__main__":
     print('|                                                            |')
     print('| Bulk facebook download of posts/comments                   |')
     print('|                                                            |')
-    print('| v. 1.7 - 02/05/2016                                        |')
+    print('| v. 2.0 - 04/05/2016                                        |')
+    print('| ---> migrated to PostgreSQL                                |')
     print('+------------------------------------------------------------+')
 
     # make sure that VPN is off
@@ -944,12 +957,11 @@ if __name__ == "__main__":
     g_errFile = open('FBWatchHTTPErrors.txt', 'w')
 
     # sql_mode='NO_ENGINE_SUBSTITUTION' because of new Utf8 controls in 16.04 MySQL
-    g_connector = mysql.connector.connect(
-        sql_mode='NO_ENGINE_SUBSTITUTION',
-        user='root',
-        password='murugan!',
+    g_connector = psycopg2.connect(
         host='192.168.0.52',
-        database='FBWatch')
+        database="FBWatch",
+        user="postgres",
+        password="murugan!")
 
     getFBToken()
 

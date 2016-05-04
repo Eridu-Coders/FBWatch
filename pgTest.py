@@ -31,6 +31,17 @@ if __name__ == "__main__":
 
     for l_record in l_cursor:
         print(l_record)
+    l_cursor.close()
+
+    l_cursor = l_connector.cursor()
+    try:
+        l_cursor.execute("""
+            insert into "FBWatch"."TB_THEME"("ID", "ST_NAME", "TX_REQUEST")
+            values(1, 'toto', 'tutu');
+          """)
+        l_connector.commit()
+    except psycopg2.IntegrityError as e:
+        print('Caught it!', e)
 
     l_cursor.close()
 

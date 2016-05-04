@@ -12,7 +12,7 @@ import re
 from nltk import sent_tokenize, word_tokenize, pos_tag
 from nltk.stem import WordNetLemmatizer
 
-import mysql.connector
+import psycopg2
 
 import urllib.error
 import urllib.request
@@ -160,8 +160,8 @@ g_contractions = {
 }
 # ---------------------------------------------------- Functions -------------------------------------------------------
 def cleanForInsert(s):
-    r = re.sub('"', '""', s)
-    r = re.sub(r'\\', r'\\\\', r)
+    r = re.sub("'", "''", s)
+    #r = re.sub(r'\\', r'\\\\', r)
 
     return r
 
@@ -179,8 +179,10 @@ def storeConc(p_idObjInternal, p_before, p_word, p_lemma, p_tag, p_after, p_cont
 
     l_cursor = g_connectorWrite.cursor()
     l_query = """
-        INSERT INTO `TB_CONCORD`(`ID_OBJ_INTERNAL`,`TX_BEFORE`,`ST_WORD`,`ST_LEMMA`,`ST_TAG`,`TX_AFTER`,`TX_CONTEXT`)
-        VALUES( {0}, "{1}", "{2}", "{3}", "{4}", "{5}", "{6}" )
+        INSERT INTO
+            "FBWatch"."TB_CONCORD"
+            ("ID_OBJ_INTERNAL","TX_BEFORE","ST_WORD","ST_LEMMA","ST_TAG","TX_AFTER","TX_CONTEXT")
+        VALUES( {0}, '{1}', '{2}', '{3}', '{4}', '{5}', '{6}' )
     """.format(
         p_idObjInternal,
         cleanForInsert(p_before),
@@ -205,15 +207,15 @@ def storeConc(p_idObjInternal, p_before, p_word, p_lemma, p_tag, p_after, p_cont
 def flagDone(p_idObjInternal):
     l_cursor = g_connectorOriginWrite.cursor()
     l_query = """
-        UPDATE `TB_OBJ`
-        SET F_WORD_SPLIT = "X"
-        WHERE `ID_INTERNAL` = {0};
+        UPDATE "FBWatch"."TB_OBJ"
+        SET "F_WORD_SPLIT" = 'X'
+        WHERE "ID_INTERNAL" = {0};
     """.format(p_idObjInternal)
 
     # print(l_query)
     try:
         l_cursor.execute(l_query)
-        g_connectorWrite.commit()
+        g_connectorOriginWrite.commit()
     except Exception as e:
         print('TB_CONCORD Unknown Exception: {0}'.format(repr(e)))
         print(l_query)
@@ -224,13 +226,13 @@ def flagDone(p_idObjInternal):
 def loadExclude():
     global g_exclude
 
-    l_cursor = g_connectorRead.cursor(buffered=True)
+    l_cursor = g_connectorRead.cursor()
 
     # read non page objects from TB_OBJ in 100 row batches
     l_query = """
-                SELECT `ST_LEMMA`, `ST_TAG`
-                FROM `TB_EXCLUDE`
-                WHERE `F_EXCLUDE` is not null
+                SELECT "ST_LEMMA", "ST_TAG"
+                FROM "FBWatch"."TB_EXCLUDE"
+                WHERE "F_EXCLUDE" is not null
             """
     try:
         l_cursor.execute(l_query)
@@ -391,7 +393,8 @@ if __name__ == "__main__":
     print('|                                                            |')
     print('| Build concordance from object texts                        |')
     print('|                                                            |')
-    print('| v. 1.2 - 29/04/2016                                        |')
+    print('| v. 2.0 - 04/05/2016                                        |')
+    print('| --> Migrated to PostgreSQL                                 |')
     print('+------------------------------------------------------------+')
 
     l_verbose = False
@@ -411,48 +414,42 @@ if __name__ == "__main__":
     # sql_mode='NO_ENGINE_SUBSTITUTION' because of new Utf8 controls in 16.04 MySQL
 
     # used to read from TB_OBJ
-    g_connectorRead = mysql.connector.connect(
-        sql_mode='NO_ENGINE_SUBSTITUTION',
-        user = 'root',
-        password = 'murugan!',
-        host = '192.168.0.52',
-        database='FBWatch')
-    # used to write back to TB_OBJ (F_WORD_SPLIT update)
-    g_connectorOriginWrite = mysql.connector.connect(
-        sql_mode='NO_ENGINE_SUBSTITUTION',
-        user = 'root',
-        password = 'murugan!',
-        host = '192.168.0.52',
-        database='FBWatch')
-    # used to write to TB_CONCORD
-    g_connectorWrite = mysql.connector.connect(
-        sql_mode='NO_ENGINE_SUBSTITUTION',
-        user = 'root',
-        password = 'murugan!',
-        host = '192.168.0.52',
-        database='FBWatch')
-
+    g_connectorRead = psycopg2.connect(
+        host='192.168.0.52',
+        database="FBWatch",
+        user="postgres",
+        password="murugan!")    # used to write back to TB_OBJ (F_WORD_SPLIT update)
+    g_connectorOriginWrite = psycopg2.connect(
+        host='192.168.0.52',
+        database="FBWatch",
+        user="postgres",
+        password="murugan!")    # used to write to TB_CONCORD
+    g_connectorWrite = psycopg2.connect(
+        host='192.168.0.52',
+        database="FBWatch",
+        user="postgres",
+        password="murugan!")
     loadExclude()
 
     l_finished = False
     while not l_finished:
-        l_cursor = g_connectorRead.cursor(buffered=True)
+        l_cursor = g_connectorRead.cursor()
 
         # read non page objects from TB_OBJ in 100 row batches
         l_query = """
             SELECT
-                `ID_INTERNAL`
-                ,`ST_FB_TYPE`
-                ,`TX_NAME`
-                ,`TX_CAPTION`
-                ,`TX_DESCRIPTION`
-                ,`TX_STORY`
-                ,`TX_MESSAGE`
+                "ID_INTERNAL"
+                ,"ST_FB_TYPE"
+                ,"TX_NAME"
+                ,"TX_CAPTION"
+                ,"TX_DESCRIPTION"
+                ,"TX_STORY"
+                ,"TX_MESSAGE"
             FROM
-                `TB_OBJ`
+                "FBWatch"."TB_OBJ"
             WHERE
-                `ST_TYPE` != 'Page'
-                AND `F_WORD_SPLIT` is null
+                "ST_TYPE" != 'Page'
+                AND "F_WORD_SPLIT" is null
             LIMIT 100;
         """
 
@@ -467,6 +464,13 @@ if __name__ == "__main__":
 
             print('*** NEW BATCH ***')
             for l_idInternal, l_type, l_name, l_caption, l_description, l_story, l_message in l_cursor:
+
+                l_name = '' if l_name is None else l_name
+                l_caption = '' if l_caption is None else l_caption
+                l_description = '' if l_description is None else l_description
+                l_story = '' if l_story is None else l_story
+                l_message = '' if l_message is None else l_message
+
                 print('--------------------------------------------------')
                 print('l_type       :', l_type)
                 print('l_name       :', l_name)
