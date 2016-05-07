@@ -110,7 +110,7 @@ def loginAs(p_user, p_passwd):
         time.sleep(1)
         l_finished = False
         l_count = 0
-        while not l_finished and l_count < 10:
+        while not l_finished and l_count < 5:
             for l_handle in l_driver.window_handles:
                 l_driver.switch_to.window(l_handle)
                 print('Window: {0} {1}'.format(l_handle, l_driver.title))
@@ -127,6 +127,17 @@ def loginAs(p_user, p_passwd):
             l_count += 1
 
         l_driver.switch_to.window(l_mainWindowHandle)
+
+        # retrieve token value from the status line
+        l_count = 0
+        while len(l_status.text.split('|')) < 2:
+            print('Waiting for status update', l_count)
+            time.sleep(.1)
+            l_count += 1
+            if l_count >= 300:
+                print('Could not retrieve token')
+                sys.exit()
+
         l_accessToken = l_status.text.split('|')[1]
 
     except EX.TimeoutException:

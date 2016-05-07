@@ -608,7 +608,7 @@ def updatePosts():
             and DATE_PART('day', now()::date - "DT_CRE") <= {0}
             and (
                 "DT_LAST_UPDATE" is null
-                or DATE_PART('day', now()::date - "DT_LAST_UPDATE") >= 1
+                or DATE_PART('day', now()::date - "DT_LAST_UPDATE") >= 2
             )
     """.format(G_DAYS_DEPTH)
     # print(l_query)
@@ -943,7 +943,7 @@ if __name__ == "__main__":
     print('|                                                            |')
     print('| Bulk facebook download of posts/comments                   |')
     print('|                                                            |')
-    print('| v. 2.0 - 04/05/2016                                        |')
+    print('| v. 2.1 - 06/05/2016                                        |')
     print('| ---> migrated to PostgreSQL                                |')
     print('+------------------------------------------------------------+')
 

@@ -5,24 +5,15 @@ __author__ = 'fi11222'
 
 import urllib.request
 import urllib.error
+import urllib.parse
 import json
 import re
 import sys
 
 from login_as import loginAs
 
-# ---------------------------------------------------- Main section ----------------------------------------------------
-if __name__ == "__main__":
-    print('+------------------------------------------------------------+')
-    print('| FB watching scripts                                        |')
-    print('|                                                            |')
-    print('| Facebook Graph API test                                    |')
-    print('|                                                            |')
-    print('| v. 1.1 - 22/04/2016                                        |')
-    print('+------------------------------------------------------------+')
-
-    # l_driver = loginAs('kabir.eridu@gmail.com', '12Alhamdulillah')
-
+# ---------------------------------------------------- Functions -------------------------------------------------------
+def readTest():
     fOut = open('api_test-fields.txt', 'w')
 
     l_driver, l_accessToken = loginAs('john.braekernell@yahoo.com', '15Eyyaka')
@@ -171,3 +162,45 @@ if __name__ == "__main__":
                     fOut.flush()
 
     l_driver.quit()
+
+def postTest():
+    l_driver, l_accessToken = loginAs('kabir.eridu@gmail.com', '12Alhamdulillah')
+    l_driver.quit()
+
+
+    l_request = ('https://graph.facebook.com/v2.6/{0}/' +
+                 'likes?access_token={1}').format("1071442522902437_1071577246222298", l_accessToken)
+    try:
+        l_response = urllib.request.urlopen(
+            l_request,
+            data=urllib.parse.urlencode([('toto', 'tutu')]).encode()).read().decode('utf-8').strip()
+
+        print('l_response:', l_response)
+    except urllib.error.HTTPError as e:
+        l_headersDict = dict(e.headers.items())
+
+        l_headersRep = '\n'
+        for k in l_headersDict.keys():
+            l_headersRep += '      [{0:<20}] --> {1}\n'.format(k, l_headersDict[k])
+
+        print('{0} {1}\n{2} {3}\n{4} {5}\n{6} {7}\n{8} {9}\n{10} {11}'.format(
+            'Request Problem:', repr(e),
+            '   Code        :', e.code,
+            '   Errno       :', e.errno,
+            '   Headers     :', l_headersRep,
+            '   Message     :', e.msg,
+            'p_request      :', l_request
+        ))
+        sys.exit()
+
+# ---------------------------------------------------- Main section ----------------------------------------------------
+if __name__ == "__main__":
+    print('+------------------------------------------------------------+')
+    print('| FB watching scripts                                        |')
+    print('|                                                            |')
+    print('| Facebook Graph API test                                    |')
+    print('|                                                            |')
+    print('| v. 2.0 - 07/05/2016                                        |')
+    print('+------------------------------------------------------------+')
+
+    postTest()
