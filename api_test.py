@@ -169,11 +169,11 @@ def postTest():
 
 
     l_request = ('https://graph.facebook.com/v2.6/{0}/' +
-                 'likes?access_token={1}').format("1071442522902437_1071577246222298", l_accessToken)
+                 'comments?access_token={1}').format("586860451438994_587077508083955", l_accessToken)
     try:
         l_response = urllib.request.urlopen(
             l_request,
-            data=urllib.parse.urlencode([('toto', 'tutu')]).encode()).read().decode('utf-8').strip()
+            data=urllib.parse.urlencode([('message', 'All right.')]).encode()).read().decode('utf-8').strip()
 
         print('l_response:', l_response)
     except urllib.error.HTTPError as e:

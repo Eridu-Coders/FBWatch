@@ -10,6 +10,7 @@ import re
 import time
 import sys
 import datetime
+import argparse
 
 import psycopg2
 
@@ -35,7 +36,7 @@ g_pass = '12Alhamdulillah'                  # password
 g_errFile = None                            # log file for errors
 
 g_FBRequestCount = 0                        # number of requests performed
-G_TOKEN_LIFESPAN = 3000                     # number of requests after which the token must be renewed
+G_TOKEN_LIFESPAN = 2000                     # number of requests after which the token must be renewed
 
 G_API_VERSION = 'v2.6'                      # version of the FB API used
 
@@ -669,6 +670,31 @@ def updatePosts():
     l_cursor.close()
 
 def getLikesDetail():
+    # Count the number of objects affected
+    l_query = """
+        SELECT
+            count(1) AS "LCOUNT"
+        FROM
+            "FBWatch"."TB_OBJ"
+        WHERE
+            "ST_TYPE" != 'Page'
+            AND DATE_PART('day', now()::date - "DT_CRE") >= {0}
+            AND "F_LIKE_DETAIL" is null
+    """.format(G_LIKES_DEPTH)
+
+    l_totalCount = 0
+    l_cursor = g_connector.cursor()
+    try:
+        l_cursor.execute(l_query)
+
+        for l_count in l_cursor:
+            l_totalCount = l_count
+    except Exception as e:
+        print('Likes detail download (count) Unknown Exception: {0}'.format(repr(e)))
+        print(l_query)
+        sys.exit()
+
+    l_cursor.close()
     l_cursor = g_connector.cursor()
 
     # all non page objects older than G_LIKES_DEPTH days and not already processed
@@ -684,6 +710,7 @@ def getLikesDetail():
     """.format(G_LIKES_DEPTH)
     # print(l_query)
 
+    l_objCount = 0
     try:
         l_cursor.execute(l_query)
 
@@ -711,7 +738,9 @@ def getLikesDetail():
 
                     creatLikeLink(l_likerInternalId, l_internalId, l_dtMsgStr)
 
-                    print('[{0}/{1}] {2}'.format(l_likerId, l_likerInternalId, l_likerName))
+                    print('{0}/{1} [{2} | {3}] {4}'.format(
+                        l_objCount, l_totalCount, l_likerId, l_likerInternalId, l_likerName))
+                    l_objCount += 1
 
                 if 'paging' in l_responseData.keys() and 'next' in l_responseData['paging'].keys():
                     print('*** Getting next page ...')
@@ -725,7 +754,7 @@ def getLikesDetail():
             setLikeFlag(l_id)
 
     except Exception as e:
-        print('Post Update Unknown Exception: {0}'.format(repr(e)))
+        print('Likes detail download Exception: {0}'.format(repr(e)))
         print(l_query)
         sys.exit()
 
@@ -943,9 +972,26 @@ if __name__ == "__main__":
     print('|                                                            |')
     print('| Bulk facebook download of posts/comments                   |')
     print('|                                                            |')
-    print('| v. 2.1 - 06/05/2016                                        |')
+    print('| v. 2.2 - 10/05/2016                                        |')
     print('| ---> migrated to PostgreSQL                                |')
     print('+------------------------------------------------------------+')
+
+    l_parser = argparse.ArgumentParser(description='Download FB data.')
+    l_parser.add_argument('-NoPages', help='Do not perform primary download', action='store_true')
+    l_parser.add_argument('-NoUpdate', help='Do not perform object update', action='store_true')
+
+
+    # dummy class to receive the parsed args
+    class C:
+        def __init__(self):
+            self.NoPages = False
+            self.NoUpdate = False
+
+
+    # do the argument parse
+    c = C()
+    l_parser.parse_args()
+    parser = l_parser.parse_args(namespace=c)
 
     # make sure that VPN is off
     l_ownIp = getOwnIp()
@@ -966,10 +1012,12 @@ if __name__ == "__main__":
     getFBToken()
 
     # get all post/comments from the liked pages of the queried user
-    getPages()
+    if not c.NoPages:
+        getPages()
 
     # refresh posts not older than 8 days and not already updated in the past day
-    updatePosts()
+    if not c.NoUpdate:
+        updatePosts()
 
     getLikesDetail()
 
