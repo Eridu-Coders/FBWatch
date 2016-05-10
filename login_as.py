@@ -36,7 +36,39 @@ def getDriver():
 def getUnique(p_frag, p_xpath):
     return '¤'.join([str(l_span.text_content()) for l_span in p_frag.xpath(p_xpath)]).strip()
 
-def loginAs(p_user, p_passwd):
+def loginAs(p_user, p_passwd, p_api=True):
+    if p_api:
+        return loginAsAPI(p_user, p_passwd)
+    else:
+        return loginAsScrape(p_user, p_passwd)
+
+def loginAsScrape(p_user, p_passwd):
+    l_driver = getDriver()
+
+    l_driver.get('http://www.facebook.com')
+
+    try:
+        l_userInput = WebDriverWait(l_driver, 15).until(
+            EC.presence_of_element_located((By.XPATH, '//td/input[@id="email"]')))
+
+        l_userInput.send_keys(p_user)
+
+        l_pwdInput = l_driver.find_element_by_xpath('//td/input[@id="pass"]')
+        l_pwdInput.send_keys(p_passwd)
+
+        # loginbutton
+        l_driver.find_element_by_xpath('//label[@id="loginbutton"]/input').click()
+
+        # wait for mainContainer
+        WebDriverWait(l_driver, 15).until(
+            EC.presence_of_element_located((By.XPATH, '//div[@id="mainContainer"]')))
+    except EX.TimeoutException:
+        print('Did not find user ID input or post-login mainContainer')
+        return None
+
+    return l_driver
+
+def loginAsAPI(p_user, p_passwd):
     l_driver = getDriver()
 
     l_driver.get('http://localhost/FBWatch/FBWatchLogin.html')
@@ -158,15 +190,14 @@ if __name__ == "__main__":
     print('|                                                            |')
     print('| Log-in as "X" on Facebook                                  |')
     print('|                                                            |')
-    print('| v. 1.0 - 21/04/2016                                        |')
+    print('| v. 2.0 - 10/05/2016                                        |')
     print('+------------------------------------------------------------+')
 
     # l_driver = loginAs('kabir.eridu@gmail.com', '12Alhamdulillah')
 
-    l_driver, l_accessToken = loginAs('john.braekernell@yahoo.com', '15Eyyaka')
-    print('l_accessToken:', l_accessToken)
-    l_driver.quit()
+    #l_driver, l_accessToken = loginAs('john.braekernell@yahoo.com', '15Eyyaka')
+    #print('l_accessToken:', l_accessToken)
+    #l_driver.quit()
 
-    l_driver, l_accessToken = loginAs('john.braekernell@yahoo.com', '15Eyyaka')
-    print('l_accessToken:', l_accessToken)
+    l_driver = loginAs('kabir.eridu@gmail.com', '12Alhamdulillah', p_api=False)
     l_driver.quit()

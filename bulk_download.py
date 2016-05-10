@@ -40,6 +40,8 @@ G_TOKEN_LIFESPAN = 2000                     # number of requests after which the
 
 G_API_VERSION = 'v2.6'                      # version of the FB API used
 
+g_verbose = True                            # True --> maximum progress info
+
 # ---------------------------------------------------- Functions -------------------------------------------------------
 def cleanForInsert(s):
     r = re.sub("'", "''", s)
@@ -126,7 +128,8 @@ def storeObject(p_padding, p_type, p_date,
         g_objectStored += 1
         l_stored = True
     except psycopg2.IntegrityError as e:
-        print('{0}Object already in TB_OBJ'.format(p_padding))
+        if g_verbose:
+            print('{0}Object already in TB_OBJ'.format(p_padding))
         #print('{0}PostgreSQL: {1}'.format(p_padding, e))
         g_connector.rollback()
     except Exception as e:
@@ -154,7 +157,8 @@ def storeObject(p_padding, p_type, p_date,
             g_connector.commit()
             l_stored = True
         except psycopg2.IntegrityError as e:
-            print('{0}Object already in TB_MEDIA'.format(p_padding))
+            if g_verbose:
+                print('{0}Object already in TB_MEDIA'.format(p_padding))
             #print('{0}PostgreSQL: {1}'.format(p_padding, e))
             g_connector.rollback()
         except Exception as e:
@@ -238,7 +242,8 @@ def storeUser(p_id, p_name, p_date, p_padding):
         l_cursor.execute(l_query)
         g_connector.commit()
     except psycopg2.IntegrityError as e:
-        print('{0}User already known'.format(p_padding))
+        if g_verbose:
+            print('{0}User already known'.format(p_padding))
         #print('{0}PostgreSQL: {1}'.format(p_padding, e))
         g_connector.rollback()
     except Exception as e:
@@ -295,7 +300,8 @@ def creatLikeLink(p_userIdInternal, p_objIdInternal, p_date):
         l_cursor.execute(l_query)
         g_connector.commit()
     except psycopg2.IntegrityError as e:
-        print('Like link already exists')
+        if g_verbose:
+            print('Like link already exists')
         #print('PostgreSQL: {0}'.format(e))
         g_connector.rollback()
     except Exception as e:
@@ -411,8 +417,6 @@ def getPostsFromPage(p_id):
             print('   =====[ {0} ]======================================================'.format(l_postCount))
             print('   id          :', l_postId)
             print('   date        :', l_postDate)
-            print('   type        :', l_type)
-            print('   shares      :', l_shares)
 
             # 2016-04-22T12:03:06+0000
             l_msgDate = datetime.datetime.strptime(
@@ -440,15 +444,18 @@ def getPostsFromPage(p_id):
                 l_place = json.dumps(l_post['place'])
 
             print('   name        :', l_nameShort)
-            print('   caption     :', l_captionShort)
-            print('   description :', l_descriptionSh)
-            print('   story       :', l_storyShort)
-            print('   message     :', l_messageShort)
-            print('   link        :', l_link)
-            print('   object_id   :', l_object_id)
-            print('   picture     :', l_picture)
-            print('   place       :', l_place)
-            print('   source      :', l_source)
+            if g_verbose:
+                print('   caption     :', l_captionShort)
+                print('   description :', l_descriptionSh)
+                print('   story       :', l_storyShort)
+                print('   message     :', l_messageShort)
+                print('   link        :', l_link)
+                print('   object_id   :', l_object_id)
+                print('   picture     :', l_picture)
+                print('   place       :', l_place)
+                print('   source      :', l_source)
+                print('   type        :', l_type)
+                print('   shares      :', l_shares)
 
             # store post information
             if storeObject(
@@ -507,28 +514,30 @@ def getComments(p_id, p_postId, p_pageId, p_depth):
 
     l_responseData = json.loads(l_response)
     # print('   Paging:', l_responseData['paging'])
-    print('{0}comment count -->'.format(l_depthPadding[:-3]), len(l_responseData['data']))
     if len(l_responseData['data']) > 0:
         print('{0}Latest date:'.format(l_depthPadding), l_responseData['data'][0]['created_time'])
 
+    l_commCount = 0
     while True:
         for l_comment in l_responseData['data']:
             l_commentId = l_comment['id']
             l_commentDate = l_comment['created_time']
             l_commentLikes = int(l_comment['like_count'])
             l_commentCCount = int(l_comment['comment_count'])
-            print('{0}--------------------------------------------------------'.format(l_depthPadding))
-            print('{0}id      :'.format(l_depthPadding), l_commentId)
-            print('{0}date    :'.format(l_depthPadding), l_commentDate)
-            print('{0}likes   :'.format(l_depthPadding), l_commentLikes)
-            print('{0}sub com.:'.format(l_depthPadding), l_commentCCount)
+            if g_verbose:
+                print('{0}--------------------------------------------------------'.format(l_depthPadding))
+                print('{0}id      :'.format(l_depthPadding), l_commentId)
+                print('{0}date    :'.format(l_depthPadding), l_commentDate)
+                print('{0}likes   :'.format(l_depthPadding), l_commentLikes)
+                print('{0}sub com.:'.format(l_depthPadding), l_commentCCount)
 
             l_userId= ''
             if 'from' in l_comment.keys():
                 l_userId, l_userIdShort = getOptionalField(l_comment['from'], 'id')
                 l_userName, l_userNameShort = getOptionalField(l_comment['from'], 'name')
 
-                print('{0}from    : {1} [{2}]'.format(l_depthPadding, l_userNameShort, l_userId))
+                if g_verbose:
+                    print('{0}from    : {1} [{2}]'.format(l_depthPadding, l_userNameShort, l_userId))
 
                 # store user data
                 storeUser(l_userId, l_userName, l_commentDate, l_depthPadding)
@@ -536,8 +545,9 @@ def getComments(p_id, p_postId, p_pageId, p_depth):
             l_story, l_storyShort = getOptionalField(l_comment, 'story')
             l_message, l_messageShort = getOptionalField(l_comment, 'message')
 
-            print('{0}story   :'.format(l_depthPadding), l_storyShort)
-            print('{0}message :'.format(l_depthPadding), l_messageShort)
+            if g_verbose:
+                print('{0}story   :'.format(l_depthPadding), l_storyShort)
+                print('{0}message :'.format(l_depthPadding), l_messageShort)
 
             l_src = ''
             l_url = ''
@@ -556,8 +566,9 @@ def getComments(p_id, p_postId, p_pageId, p_depth):
                 if 'description' in l_comment['attachment'].keys():
                     l_desc = l_comment['attachment']['description']
 
-            print('{0}url     :'.format(l_depthPadding), l_url)
-            print('{0}src     :'.format(l_depthPadding), l_src)
+            if g_verbose:
+                print('{0}url     :'.format(l_depthPadding), l_url)
+                print('{0}src     :'.format(l_depthPadding), l_src)
 
             # store comment information
             storeObject(
@@ -583,19 +594,22 @@ def getComments(p_id, p_postId, p_pageId, p_depth):
                 p_userId        =l_userId,
                 p_raw=json.dumps(l_comment['attachment']) if 'attachment' in l_comment.keys() else ''
             )
+            l_commCount += 1
 
             # get comments
             if l_commentCCount > 0:
                 getComments(l_commentId, p_postId, p_pageId, p_depth+1)
 
         if 'paging' in l_responseData.keys() and 'next' in l_responseData['paging'].keys():
-            print('{0}*** Getting next page ...'.format(l_depthPadding))
+            print('{0}[{1}] *** Getting next page ...'.format(l_depthPadding, l_commCount))
             l_request = l_responseData['paging']['next']
             l_response = performRequest(l_request)
 
             l_responseData = json.loads(l_response)
         else:
             break
+
+    print('{0}comment download count -->'.format(l_depthPadding[:-3]), l_commCount)
 
 def updatePosts():
     l_cursor = g_connector.cursor()
@@ -632,7 +646,6 @@ def updatePosts():
             l_shares = int(l_responseData['shares']['count']) if 'shares' in l_responseData.keys() else 0
             print('============= UPDATE ==============================================')
             print('Post ID     :', l_postId)
-            print('shares      :', l_shares)
 
             l_name, l_nameShort             = getOptionalField(l_responseData, 'name')
             l_caption, l_captionShort       = getOptionalField(l_responseData, 'caption')
@@ -641,10 +654,12 @@ def updatePosts():
             l_message, l_messageShort       = getOptionalField(l_responseData, 'message')
 
             print('name        :', l_nameShort)
-            print('caption     :', l_captionShort)
-            print('description :', l_descriptionSh)
-            print('story       :', l_storyShort)
-            print('message     :', l_messageShort)
+            if g_verbose:
+                print('caption     :', l_captionShort)
+                print('description :', l_descriptionSh)
+                print('story       :', l_storyShort)
+                print('message     :', l_messageShort)
+                print('shares      :', l_shares)
 
             # get post likes
             l_request = ('https://graph.facebook.com/{0}/{1}/likes?limit={2}&' +
@@ -687,7 +702,7 @@ def getLikesDetail():
     try:
         l_cursor.execute(l_query)
 
-        for l_count in l_cursor:
+        for l_count, in l_cursor:
             l_totalCount = l_count
     except Exception as e:
         print('Likes detail download (count) Unknown Exception: {0}'.format(repr(e)))
@@ -715,7 +730,7 @@ def getLikesDetail():
         l_cursor.execute(l_query)
 
         for l_id, l_internalId, l_dtMsg in l_cursor:
-            print(l_id, '--->')
+            print('{0}/{1}'.format(l_objCount, l_totalCount), l_id, '--->')
             # get post data
 
             l_request = ('https://graph.facebook.com/{0}/{1}/likes?limit={2}&' +
@@ -725,6 +740,7 @@ def getLikesDetail():
             l_response = performRequest(l_request)
 
             l_responseData = json.loads(l_response)
+            l_likeCount = 0
             while True:
                 for l_liker in l_responseData['data']:
                     l_likerId = l_liker['id']
@@ -738,12 +754,14 @@ def getLikesDetail():
 
                     creatLikeLink(l_likerInternalId, l_internalId, l_dtMsgStr)
 
-                    print('{0}/{1} [{2} | {3}] {4}'.format(
-                        l_objCount, l_totalCount, l_likerId, l_likerInternalId, l_likerName))
-                    l_objCount += 1
+                    if g_verbose:
+                        print('   {0}/{1} [{2} | {3}] {4}'.format(
+                            l_objCount, l_totalCount, l_likerId, l_likerInternalId, l_likerName))
+
+                    l_likeCount += 1
 
                 if 'paging' in l_responseData.keys() and 'next' in l_responseData['paging'].keys():
-                    print('*** Getting next page ...')
+                    print('   *** {0}/{1} Getting next page ...'.format(l_objCount, l_totalCount))
                     l_request = l_responseData['paging']['next']
                     l_response = performRequest(l_request)
 
@@ -752,6 +770,8 @@ def getLikesDetail():
                     break
 
             setLikeFlag(l_id)
+            print('   {0}/{1} --> {2} Likes:'.format(l_objCount, l_totalCount, l_likeCount))
+            l_objCount += 1
 
     except Exception as e:
         print('Likes detail download Exception: {0}'.format(repr(e)))
@@ -979,19 +999,22 @@ if __name__ == "__main__":
     l_parser = argparse.ArgumentParser(description='Download FB data.')
     l_parser.add_argument('-NoPages', help='Do not perform primary download', action='store_true')
     l_parser.add_argument('-NoUpdate', help='Do not perform object update', action='store_true')
-
+    l_parser.add_argument('-q', help='Quiet: less progress info', action='store_true')
 
     # dummy class to receive the parsed args
     class C:
         def __init__(self):
             self.NoPages = False
             self.NoUpdate = False
-
+            self.q = False
 
     # do the argument parse
     c = C()
     l_parser.parse_args()
     parser = l_parser.parse_args(namespace=c)
+
+    if c.q:
+        g_verbose = False
 
     # make sure that VPN is off
     l_ownIp = getOwnIp()
