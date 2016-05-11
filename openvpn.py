@@ -11,7 +11,7 @@ import urllib.error
 from threading  import Thread
 from queue import Queue, Empty  # python 3.x
 import sys
-
+import os
 # ---------------------------------------------------- Functions -------------------------------------------------------
 
 # Calls a "what is my Ip" web service to get own IP
@@ -21,7 +21,14 @@ def getOwnIp():
     try:
         l_myIp = urllib.request.urlopen('http://icanhazip.com/').read().decode('utf-8').strip()
     except urllib.error.URLError as e:
-        print('Cannot Open Own IP service:', repr(e))
+        print('Cannot Open http://icanhazip.com/ service:', repr(e))
+
+    # https://ipapi.co/ip/
+    if l_myIp is None:
+        try:
+            l_myIp = urllib.request.urlopen('https://ipapi.co/ip/').read().decode('utf-8').strip()
+        except urllib.error.URLError as e:
+            print('Cannot Open https://ipapi.co/ip/ service:', repr(e))
 
     return l_myIp
 
@@ -30,6 +37,10 @@ def getOwnIp():
 # If alive --> everything ok
 # if dead (poll() not None) --> error of some kind
 def switchonVpn(p_config, p_verbose=True):
+    if os.geteuid() != 0:
+        print('Must be root')
+        sys.exit()
+
     # function to output lines as a queue
     # (1) from http://stackoverflow.com/questions/375427/non-blocking-read-on-a-subprocess-pipe-in-python
     def enqueue_output(out, queue):
@@ -90,9 +101,10 @@ def switchonVpn(p_config, p_verbose=True):
             # if "Initialization Sequence Completed" appears in message --> connexion established
             if re.search('Initialization Sequence Completed', l_out):
                 if p_verbose:
-                    print('OpenVpn pid:', l_process.pid)
+                    print('OpenVpn pid :', l_process.pid)
                     # print new IP
-                    print('New Ip:', getOwnIp())
+                    print('New Ip      :', getOwnIp())
+                    print('Elapsed time:', time.perf_counter() - t0, 'seconds')
 
                 break
 
@@ -108,7 +120,12 @@ if __name__ == "__main__":
     print('| v. 1.0 - 20/04/2016                                        |')
     print('+------------------------------------------------------------+')
 
-    l_process = switchonVpn('TorGuard.Swiss.ovpn', p_verbose=True)
+    # TorGuard.United.Kingdom.ovpn
+    l_process = switchonVpn('TorGuard.United.Kingdom.ovpn', p_verbose=True)
+    #l_process = switchonVpn('TorGuard.South.Africa.ovpn', p_verbose=True)
+    #l_process = switchonVpn('TorGuard.Swiss.ovpn', p_verbose=True)
 
     if l_process.poll() is None:
         l_process.kill()
+
+    print('Ip now:', getOwnIp())

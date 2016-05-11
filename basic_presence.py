@@ -9,6 +9,7 @@ import time
 import random
 import re
 import argparse
+import os
 
 from selenium import webdriver
 from selenium.webdriver.support.ui import WebDriverWait
@@ -17,7 +18,13 @@ from selenium.webdriver.common.by import By
 from selenium.common import exceptions as EX
 
 from login_as import loginAs
+from openvpn import switchonVpn
 
+# to get access to a newly installed PostgreSQL server
+# http://www.postgresql.org/message-id/4D958A35.8030501@hogranch.com
+# $ sudo -u postgres psql
+
+# postgres=> alter user postgres password 'apassword';
 # ---------------------------------------------------- Globals ---------------------------------------------------------
 G_WAIT_FB_MIN = 60
 G_WAIT_FB_MAX = 120
@@ -29,12 +36,25 @@ G_LIMIT_TOP_USERS = 200
 
 g_verbose = True
 
+G_DIRTY_FILE = '__Local_DB_is_dirty.txt'
+
 # ---------------------------------------------------- Functions -------------------------------------------------------
 def cleanForInsert(s):
     r = re.sub("'", "''", s)
     # r = re.sub(r'\\', r'\\\\', r)
 
     return r
+
+def markLocalDBasDirty():
+    with open(G_DIRTY_FILE, 'w') as f:
+        f.write('Hello')
+        f.close()
+
+def isLocalDBDirty():
+    return os.path.isfile(G_DIRTY_FILE)
+
+def markLocalDBasClean():
+    os.remove(G_DIRTY_FILE)
 
 # wait random time between given bounds
 def randomWait(p_minDelay, p_maxDelay):
@@ -121,6 +141,7 @@ def logOneLike(p_userId, p_objId, p_phantom):
     try:
         l_cursor.execute(l_query)
         g_connectorWrite.commit()
+        markLocalDBasDirty()
     except psycopg2.IntegrityError as e:
         print('WARNING: cannot insert into TB_PRESENCE_LIKE')
         print('PostgreSQL: {0}'.format(e))
@@ -145,6 +166,7 @@ def logOneComment(p_userId, p_objId, p_comm, p_phantom):
     try:
         l_cursor.execute(l_query)
         g_connectorWrite.commit()
+        markLocalDBasDirty()
     except psycopg2.IntegrityError as e:
         print('WARNING: cannot insert into TB_PRESENCE_COMM')
         print('PostgreSQL: {0}'.format(e))
@@ -278,6 +300,102 @@ def distributeComments(p_driver, p_phantom):
         sys.exit()
 
     l_cursor.close()
+
+def performQuery(p_query, p_record=None):
+    l_cursor = g_connectorWrite.cursor()
+
+    try:
+        if p_record is None:
+            l_cursor.execute(p_query)
+        else:
+            l_cursor.execute(p_query, p_record)
+        g_connectorWrite.commit()
+    except psycopg2.IntegrityError as e:
+        print('WARNING: Could not fully execute:\n', p_query)
+        print('PostgreSQL: {0}'.format(e))
+        g_connectorWrite.rollback()
+    except Exception as e:
+        print('PG Unknown Exception: {0}'.format(repr(e)))
+        print('Query  :', p_query)
+        print('Record :', p_record)
+        sys.exit()
+
+    l_cursor.close()
+
+def slurpTable(p_table):
+    l_cursor = g_connectorRead.cursor()
+
+    l_query = ''
+    try:
+        l_query = 'select * from "FBWatch"."{0}"'.format(p_table)
+        l_cursor.execute(l_query)
+
+        for l_record in l_cursor:
+            performQuery(
+                'insert into "FBWatch"."{0}" values({1})'.format(
+                    p_table,
+                    ','.join(['%s' for i in range(len(l_record))])),
+                l_record
+            )
+    except Exception as e:
+        print('PG Unknown Exception: {0}'.format(repr(e)))
+        print(l_query)
+        sys.exit()
+
+    l_cursor.close()
+
+def cacheData():
+    global g_connectorRead
+    global g_connectorWrite
+
+    g_connectorRead = psycopg2.connect(
+        host='192.168.0.52',
+        database="FBWatch",
+        user="postgres",
+        password="murugan!")
+
+    g_connectorWrite = psycopg2.connect(
+        host='localhost',
+        database="FBWatch",
+        user="postgres",
+        password="murugan!")
+
+    l_tableList = ['TB_PRESENCE_COMM', 'TB_PRESENCE_LIKE', 'TB_USER_AGGREGATE', 'TB_OBJ', 'TB_PHANTOM']
+    for l_table in l_tableList:
+        print('Purging', l_table)
+        performQuery('delete from "FBWatch"."{0}"'.format(l_table))
+
+    for l_table in l_tableList:
+        print('Slurping', l_table)
+        slurpTable(l_table)
+
+    g_connectorRead.close()
+    g_connectorWrite.close()
+
+def updateMainDB():
+    global g_connectorRead
+    global g_connectorWrite
+
+    g_connectorRead = psycopg2.connect(
+        host='localhost',
+        database="FBWatch",
+        user="postgres",
+        password="murugan!")
+
+    g_connectorWrite = psycopg2.connect(
+        host='192.168.0.52',
+        database="FBWatch",
+        user="postgres",
+        password="murugan!")
+
+    l_tableList = ['TB_PRESENCE_COMM', 'TB_PRESENCE_LIKE']
+    for l_table in l_tableList:
+        print('Sending', l_table, 'contents back to main server')
+        slurpTable(l_table)
+
+    g_connectorRead.close()
+    g_connectorWrite.close()
+
 # ---------------------------------------------------- Main ------------------------------------------------------------
 if __name__ == "__main__":
     print('+------------------------------------------------------------+')
@@ -291,12 +409,15 @@ if __name__ == "__main__":
     l_parser = argparse.ArgumentParser(description='Download FB data.')
     l_parser.add_argument('-NoLikes', help='Do not perform likes distribution', action='store_true')
     l_parser.add_argument('-q', help='Quiet: less progress info', action='store_true')
+    l_parser.add_argument('-CleanLocal', help='Only cleans up local DB', action='store_true')
 
     # dummy class to receive the parsed args
     class C:
         def __init__(self):
             self.NoLikes = False
             self.q = False
+            self.CleanLocal = False
+
 
     # do the argument parse
     c = C()
@@ -305,28 +426,69 @@ if __name__ == "__main__":
 
     if c.q:
         g_verbose = False
+
     random.seed()
 
-    l_phantomId = 'kabir.eridu@gmail.com'
-    l_phantomPwd = '12Alhamdulillah'
-    l_driver = loginAs(l_phantomId, l_phantomPwd, p_api=False)
+    if os.geteuid() != 0:
+        print('Must be root')
+        sys.exit()
 
-    # used to read from TB_THEME
+    # get local copies of tables used here
+    if isLocalDBDirty():
+        updateMainDB()
+        markLocalDBasClean()
+
+    if c.CleanLocal:
+        sys.exit()
+
+    cacheData()
+
+    # switch to local DB to avoid being cut off by VPN
     g_connectorRead = psycopg2.connect(
-        host='192.168.0.52',
+        host='localhost',
         database="FBWatch",
         user="postgres",
         password="murugan!")
-    # used to write to TB_WORD_THEME
     g_connectorWrite = psycopg2.connect(
-        host='192.168.0.52',
+        host='localhost',
         database="FBWatch",
         user="postgres",
         password="murugan!")
 
-    if not c.NoLikes:
-        distributeLikes(l_driver, l_phantomId)
-    distributeComments(l_driver, l_phantomId)
+    l_cursor = g_connectorRead.cursor()
 
-    l_driver.quit()
+    l_query = """
+        select * from "FBWatch"."TB_PHANTOM"
+    """
+
+    try:
+        l_cursor.execute(l_query)
+
+        for l_phantomId, l_phantomPwd, l_vpn in l_cursor:
+            l_process = switchonVpn(l_vpn, p_verbose=True)
+
+            if l_process.poll() is None:
+                l_driver = loginAs(l_phantomId, l_phantomPwd, p_api=False)
+
+                if not c.NoLikes:
+                    distributeLikes(l_driver, l_phantomId)
+                distributeComments(l_driver, l_phantomId)
+
+                l_driver.quit()
+
+            if l_process.poll() is None:
+                l_process.kill()
+    except Exception as e:
+        print('Unknown Exception: {0}'.format(repr(e)))
+        print(l_query)
+        sys.exit()
+
+    l_cursor.close()
+
+    g_connectorRead.close()
+    g_connectorWrite.close()
+
+    # update main DB with results
+    updateMainDB()
+    markLocalDBasClean()
 
