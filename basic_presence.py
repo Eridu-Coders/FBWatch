@@ -108,6 +108,7 @@ def likeOrComment(p_idPost, p_driver, p_message=''):
 
             l_retVal = True
             if g_verbose:
+                l_commBlock = l_driver.find_element_by_xpath('//div[@data-testid="ufi_highlighted_comment"]')
                 print('{0} -->'.format(p_idPost),
                       re.sub('\s+', ' ', l_commBlock.text).strip(),
                       '-->', p_message)
@@ -410,6 +411,7 @@ if __name__ == "__main__":
     l_parser.add_argument('-NoLikes', help='Do not perform likes distribution', action='store_true')
     l_parser.add_argument('-q', help='Quiet: less progress info', action='store_true')
     l_parser.add_argument('-CleanLocal', help='Only cleans up local DB', action='store_true')
+    l_parser.add_argument('-Test', help='No VPN and only KA as user', action='store_true')
 
     # dummy class to receive the parsed args
     class C:
@@ -417,6 +419,7 @@ if __name__ == "__main__":
             self.NoLikes = False
             self.q = False
             self.CleanLocal = False
+            self.Test = False
 
 
     # do the argument parse
@@ -433,27 +436,40 @@ if __name__ == "__main__":
         print('Must be root')
         sys.exit()
 
-    # get local copies of tables used here
-    if isLocalDBDirty():
-        updateMainDB()
-        markLocalDBasClean()
+    if c.Test:
+        # Test set-up --> direct connection
+        g_connectorRead = psycopg2.connect(
+            host='192.168.0.52',
+            database="FBWatch",
+            user="postgres",
+            password="murugan!")
+        g_connectorWrite = psycopg2.connect(
+            host='192.168.0.52',
+            database="FBWatch",
+            user="postgres",
+            password="murugan!")
+    else:
+        # get local copies of tables used here
+        if isLocalDBDirty():
+            updateMainDB()
+            markLocalDBasClean()
 
-    if c.CleanLocal:
-        sys.exit()
+        if c.CleanLocal:
+            sys.exit()
 
-    cacheData()
+        cacheData()
 
-    # switch to local DB to avoid being cut off by VPN
-    g_connectorRead = psycopg2.connect(
-        host='localhost',
-        database="FBWatch",
-        user="postgres",
-        password="murugan!")
-    g_connectorWrite = psycopg2.connect(
-        host='localhost',
-        database="FBWatch",
-        user="postgres",
-        password="murugan!")
+        # switch to local DB to avoid being cut off by VPN
+        g_connectorRead = psycopg2.connect(
+            host='localhost',
+            database="FBWatch",
+            user="postgres",
+            password="murugan!")
+        g_connectorWrite = psycopg2.connect(
+            host='localhost',
+            database="FBWatch",
+            user="postgres",
+            password="murugan!")
 
     l_cursor = g_connectorRead.cursor()
 
@@ -465,9 +481,14 @@ if __name__ == "__main__":
         l_cursor.execute(l_query)
 
         for l_phantomId, l_phantomPwd, l_vpn in l_cursor:
-            l_process = switchonVpn(l_vpn, p_verbose=True)
+            if c.Test:
+                # test parameters and no VPN
+                l_phantomId = 'kabir.eridu@gmail.com'
+                l_phantomPwd = '12Alhamdulillah'
+            else:
+                l_process = switchonVpn(l_vpn, p_verbose=True)
 
-            if l_process.poll() is None:
+            if c.Test or l_process.poll() is None:
                 l_driver = loginAs(l_phantomId, l_phantomPwd, p_api=False)
 
                 if not c.NoLikes:
@@ -476,8 +497,12 @@ if __name__ == "__main__":
 
                 l_driver.quit()
 
-            if l_process.poll() is None:
+            if c.Test:
+                # only one user if in test mode --> no need to loop
+                break
+            elif l_process.poll() is None:
                 l_process.kill()
+
     except Exception as e:
         print('Unknown Exception: {0}'.format(repr(e)))
         print(l_query)
@@ -489,6 +514,7 @@ if __name__ == "__main__":
     g_connectorWrite.close()
 
     # update main DB with results
-    updateMainDB()
-    markLocalDBasClean()
+    if not c.Test:
+        updateMainDB()
+        markLocalDBasClean()
 
