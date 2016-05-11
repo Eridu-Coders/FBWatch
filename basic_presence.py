@@ -5,12 +5,16 @@ __author__ = 'fi11222'
 
 import psycopg2
 import sys
-import urllib.request
-import urllib.error
-import urllib.parse
 import time
 import random
 import re
+import argparse
+
+from selenium import webdriver
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.common.by import By
+from selenium.common import exceptions as EX
 
 from login_as import loginAs
 
@@ -20,6 +24,10 @@ G_WAIT_FB_MAX = 120
 
 g_connectorRead = None
 g_connectorWrite = None
+
+G_LIMIT_TOP_USERS = 200
+
+g_verbose = True
 
 # ---------------------------------------------------- Functions -------------------------------------------------------
 def cleanForInsert(s):
@@ -35,65 +43,79 @@ def randomWait(p_minDelay, p_maxDelay):
         print('Waiting for {0:.2f} seconds ...'.format(l_wait))
         time.sleep(l_wait)
 
-def likeOrComment(p_idPost, p_token, p_message=''):
-    if len(p_message) > 0:
-        l_edge = 'comments'
-        l_key = 'message'
-        l_value = p_message
-    else:
-        l_edge = 'likes'
-        l_key = 'toto'
-        l_value = 'tutu'
+def likeOrComment(p_idPost, p_driver, p_message=''):
+    p_driver.get('http://www.facebook.com/{0}'.format(p_idPost))
 
-    l_request = ('https://graph.facebook.com/v2.6/{0}/' +
-                 '{1}?access_token={2}').format(p_idPost, l_edge, p_token)
-
+    # ufi_highlighted_comment
     try:
-        l_response = urllib.request.urlopen(
-            l_request,
-            data=urllib.parse.urlencode([(l_key, l_value)]).encode()
-        ).read().decode('utf-8').strip()
+        l_commBlock = WebDriverWait(l_driver, 15).until(
+            EC.presence_of_element_located((By.XPATH, '//div[@data-testid="ufi_highlighted_comment"]')))
 
-        print('l_response:', l_response)
-        l_retVal = True
-    except urllib.error.HTTPError as e:
-        l_headersDict = dict(e.headers.items())
+        time.sleep(1)
+        if len(p_message) == 0:
+            l_likeLink = WebDriverWait(l_driver, 15).until(
+                EC.presence_of_element_located(
+                    (By.XPATH,
+                    '//div[@data-testid="ufi_highlighted_comment"]//a[@class="UFILikeLink"]')
+                )
+            )
 
-        l_headersRep = '\n'
-        for k in l_headersDict.keys():
-            l_headersRep += '      [{0:<20}] --> {1}\n'.format(k, l_headersDict[k])
+            l_countLoop = 0
+            l_retVal = True
+            while l_likeLink.text != 'Unlike':
+                l_likeLink.click()
+                time.sleep(.5)
+                l_likeLink = l_driver.find_element_by_xpath(
+                    '//div[@data-testid="ufi_highlighted_comment"]//a[@class="UFILikeLink"]')
 
-        print('{0} {1}\n{2} {3}\n{4} {5}\n{6} {7}\n{8} {9}\n{10} {11}'.format(
-            'Request Problem:', repr(e),
-            '   Code        :', e.code,
-            '   Errno       :', e.errno,
-            '   Headers     :', l_headersRep,
-            '   Message     :', e.msg,
-            'p_request      :', l_request
-        ))
+                if l_countLoop > 10:
+                    l_retVal = False
+                    break
+                else:
+                    l_countLoop += 1
 
-        # It looks like you were misusing this feature by going too fast
-        if 'WWW-Authenticate' in l_headersDict.keys() and \
-            re.search(
-                'It looks like you were misusing this feature by going too fast',
-                l_headersDict['WWW-Authenticate']):
+            if g_verbose:
+                print('Liked {0} -->'.format(p_idPost), re.sub('\s+', ' ', l_commBlock.text).strip())
+        else:
+            # UFIAddCommentInput _1osb _5yk1
+            l_commentZone = WebDriverWait(l_driver, 15).until(
+                EC.presence_of_element_located(
+                    (By.XPATH,
+                    '//div[@data-testid="ufi_reply_composer"]')
+                )
+            )
+            l_commentZone.send_keys(re.sub('\s+', ' ', p_message).strip() + '\n')
 
-            print('FB Block!')
-            sys.exit()
-
+            l_retVal = True
+            if g_verbose:
+                print('{0} -->'.format(p_idPost),
+                      re.sub('\s+', ' ', l_commBlock.text).strip(),
+                      '-->', p_message)
+    except EX.TimeoutException:
+        print('Did not find highlighted comment block')
         l_retVal = False
+    except EX.WebDriverException as e:
+        print('Unknown WebDriverException -->', e)
+        if len(p_message) == 0:
+            l_likeLink = l_driver.find_element_by_xpath(
+                '//div[@data-testid="ufi_highlighted_comment"]//a[@class="UFILikeLink"]')
+            if l_likeLink.text == 'Unlike':
+                l_retVal = True
+            else: l_retVal = False
+        else:
+            l_retVal = False
 
     randomWait(G_WAIT_FB_MIN, G_WAIT_FB_MAX)
     return l_retVal
 
-def logOneLike(p_userId, p_objId):
+def logOneLike(p_userId, p_objId, p_phantom):
     l_cursor = g_connectorWrite.cursor()
 
     l_query = """
-        INSERT INTO "FBWatch"."TB_PRESENCE_LIKE"("ID_USER", "ID_OBJ", "DT_LIKE")
-        VALUES( '{0}', '{1}', CURRENT_TIMESTAMP )
+        INSERT INTO "FBWatch"."TB_PRESENCE_LIKE"("ID_USER", "ID_OBJ", "DT_LIKE", "ID_PHANTOM")
+        VALUES( '{0}', '{1}', CURRENT_TIMESTAMP, '{2}' )
     """.format(
-        p_userId, p_objId)
+        p_userId, p_objId, p_phantom)
 
     # print(l_query)
     try:
@@ -110,14 +132,14 @@ def logOneLike(p_userId, p_objId):
 
     l_cursor.close()
 
-def logOneComment(p_userId, p_objId, p_comm):
+def logOneComment(p_userId, p_objId, p_comm, p_phantom):
     l_cursor = g_connectorWrite.cursor()
 
     l_query = """
-        INSERT INTO "FBWatch"."TB_PRESENCE_COMM"("ID_USER", "ID_OBJ", "ST_COMM", "DT_COMM")
-        VALUES( '{0}', '{1}', '{2}', CURRENT_TIMESTAMP )
+        INSERT INTO "FBWatch"."TB_PRESENCE_COMM"("ID_USER", "ID_OBJ", "ST_COMM", "DT_COMM", "ID_PHANTOM")
+        VALUES( '{0}', '{1}', '{2}', CURRENT_TIMESTAMP, '{3}' )
     """.format(
-        p_userId, p_objId, cleanForInsert(p_comm))
+        p_userId, p_objId, cleanForInsert(p_comm), p_phantom)
 
     # print(l_query)
     try:
@@ -134,7 +156,8 @@ def logOneComment(p_userId, p_objId, p_comm):
 
     l_cursor.close()
 
-def distributeLikes():
+def distributeLikes(p_driver, p_phantom):
+    print('+++ Likes Distribution +++')
     l_cursor = g_connectorRead.cursor()
 
     l_query = """
@@ -148,28 +171,38 @@ def distributeLikes():
                 select
                     "U"."ID"
                     ,"U"."ST_NAME"
-                    , max("O"."DT_CRE") "DLATEST"
+                    ,"U"."TTCOUNT"
+                    , max("J"."DT_CRE") "DLATEST"
                 from
-                    "FBWatch"."TB_USER_AGGREGATE" "U" join "FBWatch"."TB_OBJ" "O" on "O"."ID_USER" = "U"."ID"
-                where "U"."AUTHCOUNT" > 10
+                    "FBWatch"."TB_USER_AGGREGATE" "U" join "FBWatch"."TB_OBJ" "J" on "J"."ID_USER" = "U"."ID"
+                where
+                    "U"."AUTHCOUNT" > 10
+                    and "J"."ST_FB_TYPE" = 'Comment'
+                    and length("J"."TX_MESSAGE") > 50
                 group by "U"."ID"
-                order by "U"."TTCOUNT" desc
-                limit 200
             ) "Z" on "Z"."ID" = "O"."ID_USER" and "Z"."DLATEST" = "O"."DT_CRE"
             left outer join "FBWatch"."TB_PRESENCE_LIKE" "X" on "X"."ID_OBJ" = "O"."ID"
         where
             "X"."ID_OBJ" is null
-    """
+        order by "Z"."TTCOUNT" desc
+        limit {0}
+    """.format(G_LIMIT_TOP_USERS)
 
     try:
         l_cursor.execute(l_query)
 
         l_count = 0
         for l_idUser, l_userName, l_commId, l_commTxt in l_cursor:
+            if len(l_commTxt) > 50:
+                l_commTxt = l_commTxt[0:50] + '...'
+
             print('{4:<3} [{0:<20}] {1:<30} --> [{2:<40}] {3}'.format(
-                l_idUser, l_userName, l_commId, l_commTxt[0:80], l_count))
-            if likeOrComment(l_commId, l_accessToken):
-                logOneLike(l_idUser, l_commId)
+                l_idUser, l_userName, l_commId, l_commTxt, l_count))
+
+            if likeOrComment(l_commId, p_driver):
+                logOneLike(l_idUser, l_commId, p_phantom)
+            else:
+                logOneLike(l_idUser, l_commId, '<Dead>')
 
             l_count += 1
 
@@ -180,7 +213,8 @@ def distributeLikes():
 
     l_cursor.close()
 
-def distributeComments():
+def distributeComments(p_driver, p_phantom):
+    print('*** Comments Distribution ***')
     l_cursor = g_connectorRead.cursor()
 
     l_query = """
@@ -194,38 +228,47 @@ def distributeComments():
                 select
                     "U"."ID"
                     ,"U"."ST_NAME"
-                    , max("O"."DT_CRE") "DLATEST"
+                    ,"U"."TTCOUNT"
+                    , max("J"."DT_CRE") "DLATEST"
                 from
-                    "FBWatch"."TB_USER_AGGREGATE" "U" join "FBWatch"."TB_OBJ" "O" on "O"."ID_USER" = "U"."ID"
+                    "FBWatch"."TB_USER_AGGREGATE" "U" join "FBWatch"."TB_OBJ" "J" on "J"."ID_USER" = "U"."ID"
                 where
                     "U"."AUTHCOUNT" > 10
-                    and length("O"."TX_MESSAGE") > 100
+                    and "J"."ST_FB_TYPE" = 'Comment'
+                    and length("J"."TX_MESSAGE") > 100
                 group by "U"."ID"
-                order by "U"."TTCOUNT" desc
-                limit 200
             ) "Z" on "Z"."ID" = "O"."ID_USER" and "Z"."DLATEST" = "O"."DT_CRE"
             left outer join "FBWatch"."TB_PRESENCE_COMM" "X" on "X"."ID_OBJ" = "O"."ID"
         where
             "X"."ID_OBJ" is null
-    """
+        order by "Z"."TTCOUNT" desc
+        limit {0}
+    """.format(G_LIMIT_TOP_USERS)
 
     try:
         l_cursor.execute(l_query)
 
         l_count = 0
         for l_idUser, l_userName, l_commId, l_commTxt in l_cursor:
-            print('{4:<3} [{0:<20}] {1:<30} --> [{2:<40}] {3}'.format(
-                l_idUser, l_userName, l_commId, l_commTxt[0:80], l_count))
+            if len(l_commTxt) > 50:
+                l_commTxt = l_commTxt[0:50] + '...'
 
-            l_commentNew = random.choice([
-                'Indeed!', 'Ok!', 'Well I guess ...', 'How about that?', 'I agree', '100% agree',
+            l_commList = [
+                'Indeed', 'Ok', 'Well I guess ...', 'How about that?', 'I agree', '100% agree',
                 'Quite right', 'Absolutely right', 'Hell yes!', 'Right on the mark', 'Yes indeed',
-                'Yes', 'True', 'So true'])
+                'Yes', 'True', 'So true', 'Yeah', 'Hell Yeah', 'Fuck Yeah', 'Thumbs up man',
+                'Can\'t say anything against that', 'Couldn\'t agree more',
+                'There is no denying it', 'The Truth always comes out',
+                'Couldn\'t have said it better myself', 'You are right', 'You are so right' ]
+            l_commentNew = random.choice(l_commList + [c+'!' for c in l_commList] + [c+'!!' for c in l_commList])
 
-            print('   ---> Comment:', l_commentNew)
+            print('{4:<3} [{0:<20}] {1:<30} --> [{2:<40}] {3} --> {5}'.format(
+                l_idUser, l_userName, l_commId, l_commTxt, l_count, l_commentNew))
 
-            if likeOrComment(l_commId, l_accessToken, l_commentNew):
-                logOneComment(l_idUser, l_commId, l_commentNew)
+            if likeOrComment(l_commId, p_driver, l_commentNew):
+                logOneComment(l_idUser, l_commId, l_commentNew, p_phantom)
+            else:
+                logOneComment(l_idUser, l_commId, '', '<Dead>')
 
             l_count += 1
 
@@ -242,13 +285,31 @@ if __name__ == "__main__":
     print('|                                                            |')
     print('| Basic facebook presence                                    |')
     print('|                                                            |')
-    print('| v. 1.0 - 07/05/2016                                        |')
+    print('| v. 2.0 - 11/05/2016                                        |')
     print('+------------------------------------------------------------+')
 
+    l_parser = argparse.ArgumentParser(description='Download FB data.')
+    l_parser.add_argument('-NoLikes', help='Do not perform likes distribution', action='store_true')
+    l_parser.add_argument('-q', help='Quiet: less progress info', action='store_true')
+
+    # dummy class to receive the parsed args
+    class C:
+        def __init__(self):
+            self.NoLikes = False
+            self.q = False
+
+    # do the argument parse
+    c = C()
+    l_parser.parse_args()
+    parser = l_parser.parse_args(namespace=c)
+
+    if c.q:
+        g_verbose = False
     random.seed()
 
-    l_driver, l_accessToken = loginAs('kabir.eridu@gmail.com', '12Alhamdulillah')
-    l_driver.quit()
+    l_phantomId = 'kabir.eridu@gmail.com'
+    l_phantomPwd = '12Alhamdulillah'
+    l_driver = loginAs(l_phantomId, l_phantomPwd, p_api=False)
 
     # used to read from TB_THEME
     g_connectorRead = psycopg2.connect(
@@ -263,6 +324,9 @@ if __name__ == "__main__":
         user="postgres",
         password="murugan!")
 
-    #distributeComments()
-    distributeLikes()
+    if not c.NoLikes:
+        distributeLikes(l_driver, l_phantomId)
+    distributeComments(l_driver, l_phantomId)
+
+    l_driver.quit()
 

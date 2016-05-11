@@ -838,10 +838,11 @@ def performRequest(p_request):
                         time.sleep(l_sleepPeriod)
                         l_request = renewTokenAndRequest(l_request)
 
-                # Unknown FB error --> wait 30 s and retry 5 times max
-                if re.search(r'An unexpected error has occurred', l_FBMessage):
-                    if l_errCount < 5:
-                        l_wait = 30
+                # Unknown FB error --> wait 10 s and retry 3 times max then return empty result
+                if re.search(r'An unexpected error has occurred', l_FBMessage)\
+                        or re.search(r'An unknown error has occurred', l_FBMessage):
+                    if l_errCount < 3:
+                        l_wait = 10
                         printAndSave('{0} {1}\n{2}\n'.format(
                             'FB unknown error: ', l_FBMessage,
                             'Waiting for {0} seconds'.format(l_wait)
@@ -879,10 +880,8 @@ def performRequest(p_request):
 
                 # Other FB error
                 else:
-                    l_wait = getWait(l_errCount)
-                    printAndSave('{0} {1}\n{2}\n'.format(
-                        'FB msg: ', l_FBMessage,
-                        'Waiting for {0} seconds'.format(l_wait)
+                    printAndSave('{0} {1}\n'.format(
+                        'FB msg: ', l_FBMessage
                     ))
 
                     sys.exit()
@@ -992,7 +991,7 @@ if __name__ == "__main__":
     print('|                                                            |')
     print('| Bulk facebook download of posts/comments                   |')
     print('|                                                            |')
-    print('| v. 2.2 - 10/05/2016                                        |')
+    print('| v. 2.3 - 11/05/2016                                        |')
     print('| ---> migrated to PostgreSQL                                |')
     print('+------------------------------------------------------------+')
 
