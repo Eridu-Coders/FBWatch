@@ -26,8 +26,8 @@ from openvpn import switchonVpn
 
 # postgres=> alter user postgres password 'apassword';
 # ---------------------------------------------------- Globals ---------------------------------------------------------
-G_WAIT_FB_MIN = 60
-G_WAIT_FB_MAX = 120
+G_WAIT_FB_MIN = 30
+G_WAIT_FB_MAX = G_WAIT_FB_MIN + 60
 
 g_connectorRead = None
 g_connectorWrite = None
@@ -302,7 +302,7 @@ def distributeComments(p_driver, p_phantom):
 
     l_cursor.close()
 
-def performQuery(p_query, p_record=None):
+def performQuery(p_query, p_record=None, p_verbose=True):
     l_cursor = g_connectorWrite.cursor()
 
     try:
@@ -312,8 +312,9 @@ def performQuery(p_query, p_record=None):
             l_cursor.execute(p_query, p_record)
         g_connectorWrite.commit()
     except psycopg2.IntegrityError as e:
-        print('WARNING: Could not fully execute:\n', p_query)
-        print('PostgreSQL: {0}'.format(e))
+        if p_verbose:
+            print('WARNING: Could not fully execute:\n', p_query)
+            print('PostgreSQL: {0}'.format(e))
         g_connectorWrite.rollback()
     except Exception as e:
         print('PG Unknown Exception: {0}'.format(repr(e)))
@@ -336,7 +337,8 @@ def slurpTable(p_table):
                 'insert into "FBWatch"."{0}" values({1})'.format(
                     p_table,
                     ','.join(['%s' for i in range(len(l_record))])),
-                l_record
+                l_record,
+                p_verbose=False
             )
     except Exception as e:
         print('PG Unknown Exception: {0}'.format(repr(e)))
@@ -363,12 +365,17 @@ def cacheData():
 
     l_tableList = ['TB_PRESENCE_COMM', 'TB_PRESENCE_LIKE', 'TB_USER_AGGREGATE', 'TB_OBJ', 'TB_PHANTOM']
     for l_table in l_tableList:
-        print('Purging', l_table)
-        performQuery('delete from "FBWatch"."{0}"'.format(l_table))
+        print('+++ Dropping', l_table)
+        performQuery('drop table if exists "FBWatch"."{0}"'.format(l_table))
+
+    print('+++ Backuping main server')
+    os.system('cat /home/fi11222/FBWatch/save_main.sh | sshpass -p 15Eyyaka ssh fi11222@192.168.0.52')
 
     for l_table in l_tableList:
-        print('Slurping', l_table)
-        slurpTable(l_table)
+        print('+++ Restoring locally:', l_table)
+        os.system('/usr/bin/pg_restore --host localhost --port 5432 --username "postgres" ' +
+                  '--dbname "FBWatch" --verbose ' +
+                  '"/home/fi11222/share-partage/Vrac/{0}.backup"'.format(l_table))
 
     g_connectorRead.close()
     g_connectorWrite.close()
@@ -404,7 +411,7 @@ if __name__ == "__main__":
     print('|                                                            |')
     print('| Basic facebook presence                                    |')
     print('|                                                            |')
-    print('| v. 2.0 - 11/05/2016                                        |')
+    print('| v. 2.1 - 12/05/2016                                        |')
     print('+------------------------------------------------------------+')
 
     l_parser = argparse.ArgumentParser(description='Download FB data.')
