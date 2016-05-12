@@ -38,6 +38,68 @@ g_verbose = True
 
 G_DIRTY_FILE = '__Local_DB_is_dirty.txt'
 
+g_transChar = {
+    'A': 'Z',
+    'Z': 'E',
+    'E': 'R',
+    'R': 'F',
+    'T': 'Y',
+    'Y': 'H',
+    'U': 'T',
+    'I': 'K',
+    'O': 'L',
+    'P': 'O',
+    'Q': 'S',
+    'S': 'Z',
+    'D': 'F',
+    'F': 'R',
+    'G': 'B',
+    'H': 'J',
+    'J': 'N',
+    'K': 'L',
+    'L': 'M',
+    'M': 'P',
+    'W': 'Q',
+    'X': 'W',
+    'C': 'D',
+    'V': 'B',
+    'B': 'N',
+    'N': 'J',
+    'a': 'q',
+    'z': 'e',
+    'e': 'z',
+    'r': 't',
+    't': 'r',
+    'y': 'u',
+    'u': 'i',
+    'i': 'j',
+    'o': 'p',
+    'p': 'o',
+    'q': 'z',
+    's': 'q',
+    'd': 'q',
+    'f': 'r',
+    'g': 'h',
+    'h': 'b',
+    'j': 'u',
+    'k': 'l',
+    'l': 'm',
+    'm': 'p',
+    'w': 's',
+    'x': 'c',
+    'c': 'f',
+    'v': 'b',
+    'b': 'n',
+    'n': 'h',
+    '1': '&',
+    '0': 'à',
+    '%': 'ù',
+    '!': '§',
+    '.': ',',
+    "'": '4',
+    ' ': ' '
+}
+
 # ---------------------------------------------------- Functions -------------------------------------------------------
 def cleanForInsert(s):
     r = re.sub("'", "''", s)
@@ -276,14 +338,7 @@ def distributeComments(p_driver, p_phantom):
             if len(l_commTxt) > 50:
                 l_commTxt = l_commTxt[0:50] + '...'
 
-            l_commList = [
-                'Indeed', 'Ok', 'Well I guess ...', 'How about that?', 'I agree', '100% agree',
-                'Quite right', 'Absolutely right', 'Hell yes!', 'Right on the mark', 'Yes indeed',
-                'Yes', 'True', 'So true', 'Yeah', 'Hell Yeah', 'Fuck Yeah', 'Thumbs up man',
-                'Can\'t say anything against that', 'Couldn\'t agree more',
-                'There is no denying it', 'The Truth always comes out',
-                'Couldn\'t have said it better myself', 'You are right', 'You are so right' ]
-            l_commentNew = random.choice(l_commList + [c+'!' for c in l_commList] + [c+'!!' for c in l_commList])
+            l_commentNew = genComment()
 
             print('{4:<3} [{0:<20}] {1:<30} --> [{2:<40}] {3} --> {5}'.format(
                 l_idUser, l_userName, l_commId, l_commTxt, l_count, l_commentNew))
@@ -301,6 +356,38 @@ def distributeComments(p_driver, p_phantom):
         sys.exit()
 
     l_cursor.close()
+
+def genComment():
+    l_commList = [
+        'Indeed', 'Ok', 'That sounds right', 'I agree', '100% agree',
+        'Quite right', 'Absolutely right', 'Hell yes', 'Right on the mark', 'Yes indeed',
+        'Yes', 'True', 'So true', 'Yeah', 'Hell Yeah', 'Fuck Yeah', 'Thumbs up man',
+        "Can't say anything against that", "Couldn't agree more",
+        'There is no denying it', 'The Truth always comes out',
+        "Couldn't have said it better myself", 'You are right', 'You are so right',
+        'Damn right', 'Spot on', 'You are damn right', 'Sure enough']
+    l_commPunct = \
+        [c + '.' for c in l_commList] + \
+        [c + '!' for c in l_commList] + \
+        [c + '!!' for c in l_commList]
+
+    l_compoList = []
+    for i in range(len(l_commPunct)):
+        for j in range(len(l_commPunct)):
+            if i != j:
+                l_compoList += [l_commPunct[i] + ' ' + l_commPunct[j]]
+
+    l_commentNew = random.choice(l_compoList +
+                                 l_commList + [c + '!' for c in l_commList] + [c + '!!' for c in l_commList])
+
+    if random.randint(0, 19) == 10:
+        l_index = random.randint(0, len(l_commentNew)-1)
+        l_cnList = list(l_commentNew)
+        l_cnList[l_index] = g_transChar[l_cnList[l_index]]
+        l_commentNew = ''.join(l_cnList)
+
+    return l_commentNew
+
 
 def performQuery(p_query, p_record=None, p_verbose=True):
     l_cursor = g_connectorWrite.cursor()
@@ -419,6 +506,7 @@ if __name__ == "__main__":
     l_parser.add_argument('-q', help='Quiet: less progress info', action='store_true')
     l_parser.add_argument('-CleanLocal', help='Only cleans up local DB', action='store_true')
     l_parser.add_argument('-Test', help='No VPN and only KA as user', action='store_true')
+    l_parser.add_argument('-gc', help='Test gen comment', action='store_true')
 
     # dummy class to receive the parsed args
     class C:
@@ -427,7 +515,7 @@ if __name__ == "__main__":
             self.q = False
             self.CleanLocal = False
             self.Test = False
-
+            self.gc = False
 
     # do the argument parse
     c = C()
@@ -436,6 +524,11 @@ if __name__ == "__main__":
 
     if c.q:
         g_verbose = False
+
+    if c.gc:
+        for i in range(1000):
+            print(i, genComment())
+        sys.exit()
 
     random.seed()
 
