@@ -10,6 +10,7 @@ import random
 import re
 import argparse
 import os
+import subprocess
 
 from selenium import webdriver
 from selenium.webdriver.support.ui import WebDriverWait
@@ -241,6 +242,32 @@ def logOneComment(p_userId, p_objId, p_comm, p_phantom):
 
     l_cursor.close()
 
+def logOneRiver(p_idPage, p_idPost, p_link, p_phantom):
+    l_cursor = g_connectorWrite.cursor()
+
+    l_query = """
+        INSERT INTO "FBWatch"."TB_PRESENCE_RIVERS"("ID_PAGE", "ID_POST", "ST_LINK", "DT_COMM", "ID_PHANTOM")
+        VALUES( '{0}', '{1}', '{2}', CURRENT_TIMESTAMP, '{3}' )
+    """.format(
+        p_idPage, p_idPost, cleanForInsert(p_link), p_phantom)
+
+    # print(l_query)
+    try:
+        l_cursor.execute(l_query)
+        g_connectorWrite.commit()
+        markLocalDBasDirty()
+    except psycopg2.IntegrityError as e:
+        print('WARNING: cannot insert into TB_PRESENCE_RIVERS')
+        print('PostgreSQL: {0}'.format(e))
+        g_connectorWrite.rollback()
+    except Exception as e:
+        print('TB_PRESENCE_RIVERS Unknown Exception: {0}'.format(repr(e)))
+        print(l_query)
+        sys.exit()
+
+    l_cursor.close()
+
+
 def distributeLikes(p_driver, p_phantom):
     print('+++ Likes Distribution +++')
     l_cursor = g_connectorRead.cursor()
@@ -357,7 +384,7 @@ def distributeComments(p_driver, p_phantom):
 
     l_cursor.close()
 
-def distributeRivers():
+def distributeRivers(p_driver, p_phantom):
     print('*** Rivers Collective Image Distribution ***')
     l_cursor = g_connectorRead.cursor()
 
@@ -365,6 +392,8 @@ def distributeRivers():
         select
             "Z"."ID_PAGE" "ID_PAGE"
             ,"O"."ID" "ID_POST"
+            ,"O"."ST_FB_TYPE"
+            ,"O"."ID_USER"
             ,"O"."TX_MESSAGE"
             ,"O"."DT_CRE"
         from
@@ -376,31 +405,32 @@ def distributeRivers():
                     "FBWatch"."TB_OBJ" "J"
                 where
                     "J"."ST_TYPE" = 'Post'
+                    and ("ID_USER" = "ID_PAGE" or length("ID_USER") = 0)
                 group by "J"."ID_PAGE"
             ) "Z" on "Z"."ID_PAGE" = "O"."ID_PAGE" and "Z"."DLATEST" = "O"."DT_CRE"
             left outer join "FBWatch"."TB_PRESENCE_RIVERS" "X" on "X"."ID_POST" = "O"."ID"
         where
             "O"."ST_TYPE" = 'Post'
-            and "X"."ID_OBJ" is null
+            and "X"."ID_POST" is null
     """
 
     try:
         l_cursor.execute(l_query)
 
         l_count = 0
-        for l_idUser, l_userName, l_commId, l_commTxt in l_cursor:
-            if len(l_commTxt) > 50:
-                l_commTxt = l_commTxt[0:50] + '...'
+        for l_idPage, l_idPost, l_fbType, l_id_user, l_message, l_dtPost in l_cursor:
+            if len(l_message) > 50:
+                l_message = l_message[0:50] + '...'
 
-            l_commentNew = genComment()
+            l_newLink = genRiversLink()
 
-            print('{4:<3} [{0:<20}] {1:<30} --> [{2:<40}] {3} --> {5}'.format(
-                l_idUser, l_userName, l_commId, l_commTxt, l_count, l_commentNew))
+            print('{0:<3} [{1:<20}/{2:<20}] {3:<30} --> [{4}]'.format(
+                l_count, l_idPage, l_idPost, l_message, l_newLink))
 
-            if likeOrComment(l_commId, p_driver, l_commentNew):
-                logOneComment(l_idUser, l_commId, l_commentNew, p_phantom)
+            if likeOrComment(l_idPost, p_driver, l_newLink):
+                logOneRiver(l_idPage, l_idPost, l_newLink, p_phantom)
             else:
-                logOneComment(l_idUser, l_commId, '', '<Dead>')
+                logOneRiver(l_idPage, l_idPost, '', '<Dead>')
 
             l_count += 1
 
@@ -410,6 +440,18 @@ def distributeRivers():
         sys.exit()
 
     l_cursor.close()
+
+def genRiversLink():
+    l_link = random.choice([
+        'https://www.facebook.com/photo.php?fbid=121863904894315&set=pcb.121955864885119',
+        'https://www.facebook.com/photo.php?fbid=121868288227210&set=pb.100012121181501.-2207520000.1463124971.',
+        'https://www.facebook.com/photo.php?fbid=121867988227240&set=pb.100012121181501.-2207520000.1463124971.',
+        'https://www.facebook.com/photo.php?fbid=121867858227253&set=pb.100012121181501.-2207520000.1463124971.',
+        'https://www.facebook.com/photo.php?fbid=121867331560639&set=pb.100012121181501.-2207520000.1463124971.',
+        'https://www.facebook.com/photo.php?fbid=121865154894190&set=pb.100012121181501.-2207520000.1463124971.'
+    ])
+
+    return l_link
 
 def genComment():
     l_commList = [
@@ -507,13 +549,22 @@ def cacheData():
         user="postgres",
         password="murugan!")
 
-    l_tableList = ['TB_PRESENCE_COMM', 'TB_PRESENCE_LIKE', 'TB_USER_AGGREGATE', 'TB_OBJ', 'TB_PHANTOM']
+    l_tableList = ['TB_PHANTOM', 'TB_PRESENCE_COMM', 'TB_PRESENCE_LIKE',
+                   'TB_USER_AGGREGATE', 'TB_OBJ']
     for l_table in l_tableList:
         print('+++ Dropping', l_table)
         performQuery('drop table if exists "FBWatch"."{0}"'.format(l_table))
 
     print('+++ Backuping main server')
-    os.system('cat /home/fi11222/FBWatch/save_main.sh | sshpass -p 15Eyyaka ssh fi11222@192.168.0.52')
+    # subprocess.call('cat /home/fi11222/FBWatch/save_main.sh | sshpass -p 15Eyyaka ssh fi11222@192.168.0.52')
+    p1 = subprocess.Popen(['cat', '/home/fi11222/FBWatch/save_main.sh'],
+                          stdout=subprocess.PIPE, shell=True)
+    p2 = subprocess.Popen('sshpass -p 15Eyyaka ssh -t -t fi11222@192.168.0.52'.split(' '),
+                          stdin=p1.stdout, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    p1.stdout.close()  # Allow p1 to receive a SIGPIPE if p2 exits.
+    output, err = p2.communicate()
+    print('stdout:', output)
+    print('stderr:', err)
 
     for l_table in l_tableList:
         print('+++ Restoring locally:', l_table)
@@ -558,12 +609,15 @@ if __name__ == "__main__":
     print('| v. 2.1 - 12/05/2016                                        |')
     print('+------------------------------------------------------------+')
 
+    random.seed()
+
     l_parser = argparse.ArgumentParser(description='Download FB data.')
     l_parser.add_argument('-NoLikes', help='Do not perform likes distribution', action='store_true')
     l_parser.add_argument('-q', help='Quiet: less progress info', action='store_true')
     l_parser.add_argument('-CleanLocal', help='Only cleans up local DB', action='store_true')
     l_parser.add_argument('-Test', help='No VPN and only KA as user', action='store_true')
     l_parser.add_argument('-gc', help='Test gen comment', action='store_true')
+    l_parser.add_argument('-sshTest', help='Test remote command execution', action='store_true')
 
     # dummy class to receive the parsed args
     class C:
@@ -573,6 +627,7 @@ if __name__ == "__main__":
             self.CleanLocal = False
             self.Test = False
             self.gc = False
+            self.sshTest = False
 
     # do the argument parse
     c = C()
@@ -587,7 +642,14 @@ if __name__ == "__main__":
             print(i, genComment())
         sys.exit()
 
-    random.seed()
+    if c.sshTest:
+        print('ssh test')
+        p = subprocess.Popen('sshpass -p 15Eyyaka ssh -t -t fi11222@192.168.0.52 ll'.split(' '),
+                         stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        l_output, l_err = p.communicate()
+        print('stdout:', l_output)
+        print('stderr:', l_err)
+        sys.exit()
 
     if os.geteuid() != 0:
         print('Must be root')
