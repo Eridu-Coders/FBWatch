@@ -428,6 +428,17 @@ def getPostsFromPage(p_id):
                 l_finished = True
                 break
 
+            l_userId = ''
+            if 'from' in l_post.keys():
+                l_userId, l_userIdShort = getOptionalField(l_post['from'], 'id')
+                l_userName, l_userNameShort = getOptionalField(l_post['from'], 'name')
+
+                if g_verbose:
+                    print('   from    : {0} [{1}]'.format(l_userNameShort, l_userId))
+
+                # store user data
+                storeUser(l_userId, l_userName, l_msgDate, '   ')
+
             l_name, l_nameShort             = getOptionalField(l_post, 'name')
             l_caption, l_captionShort       = getOptionalField(l_post, 'caption')
             l_description, l_descriptionSh  = getOptionalField(l_post, 'description')
@@ -477,7 +488,9 @@ def getPostsFromPage(p_id):
                     p_link          =l_link,
                     p_picture       =l_picture,
                     p_place         =l_place,
-                    p_source        =l_source
+                    p_source        =l_source,
+                    p_userId        =l_userId,
+                    p_raw           =json.dumps(l_post['attachment']) if 'attachment' in l_post.keys() else ''
                 ):
                 # get comments
                 getComments(l_postId, l_postId, p_id, 0)

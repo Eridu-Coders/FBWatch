@@ -357,6 +357,60 @@ def distributeComments(p_driver, p_phantom):
 
     l_cursor.close()
 
+def distributeRivers():
+    print('*** Rivers Collective Image Distribution ***')
+    l_cursor = g_connectorRead.cursor()
+
+    l_query = """
+        select
+            "Z"."ID_PAGE" "ID_PAGE"
+            ,"O"."ID" "ID_POST"
+            ,"O"."TX_MESSAGE"
+            ,"O"."DT_CRE"
+        from
+            "FBWatch"."TB_OBJ" "O" join (
+                select
+                    "J"."ID_PAGE" as "ID_PAGE"
+                    , max("J"."DT_CRE") "DLATEST"
+                from
+                    "FBWatch"."TB_OBJ" "J"
+                where
+                    "J"."ST_TYPE" = 'Post'
+                group by "J"."ID_PAGE"
+            ) "Z" on "Z"."ID_PAGE" = "O"."ID_PAGE" and "Z"."DLATEST" = "O"."DT_CRE"
+            left outer join "FBWatch"."TB_PRESENCE_RIVERS" "X" on "X"."ID_POST" = "O"."ID"
+        where
+            "O"."ST_TYPE" = 'Post'
+            and "X"."ID_OBJ" is null
+    """
+
+    try:
+        l_cursor.execute(l_query)
+
+        l_count = 0
+        for l_idUser, l_userName, l_commId, l_commTxt in l_cursor:
+            if len(l_commTxt) > 50:
+                l_commTxt = l_commTxt[0:50] + '...'
+
+            l_commentNew = genComment()
+
+            print('{4:<3} [{0:<20}] {1:<30} --> [{2:<40}] {3} --> {5}'.format(
+                l_idUser, l_userName, l_commId, l_commTxt, l_count, l_commentNew))
+
+            if likeOrComment(l_commId, p_driver, l_commentNew):
+                logOneComment(l_idUser, l_commId, l_commentNew, p_phantom)
+            else:
+                logOneComment(l_idUser, l_commId, '', '<Dead>')
+
+            l_count += 1
+
+    except Exception as e:
+        print('Unknown Exception: {0}'.format(repr(e)))
+        print(l_query)
+        sys.exit()
+
+    l_cursor.close()
+
 def genComment():
     l_commList = [
         'Indeed', 'Ok', 'That sounds right', 'I agree', '100% agree',
@@ -385,6 +439,9 @@ def genComment():
         l_cnList = list(l_commentNew)
         l_cnList[l_index] = g_transChar[l_cnList[l_index]]
         l_commentNew = ''.join(l_cnList)
+
+    if random.randint(0, 19) >= 10:
+        l_commentNew = re.sub(r'\.$', '', l_commentNew)
 
     return l_commentNew
 
