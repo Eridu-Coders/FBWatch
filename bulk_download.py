@@ -437,7 +437,7 @@ def getPostsFromPage(p_id):
                     print('   from    : {0} [{1}]'.format(l_userNameShort, l_userId))
 
                 # store user data
-                storeUser(l_userId, l_userName, l_msgDate, '   ')
+                storeUser(l_userId, l_userName, l_postDate, '   ')
 
             l_name, l_nameShort             = getOptionalField(l_post, 'name')
             l_caption, l_captionShort       = getOptionalField(l_post, 'caption')
