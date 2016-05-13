@@ -555,16 +555,15 @@ def cacheData():
         print('+++ Dropping', l_table)
         performQuery('drop table if exists "FBWatch"."{0}"'.format(l_table))
 
-    print('+++ Backuping main server')
-    # subprocess.call('cat /home/fi11222/FBWatch/save_main.sh | sshpass -p 15Eyyaka ssh fi11222@192.168.0.52')
-    p1 = subprocess.Popen(['cat', '/home/fi11222/FBWatch/save_main.sh'],
-                          stdout=subprocess.PIPE, shell=True)
-    p2 = subprocess.Popen('sshpass -p 15Eyyaka ssh -t -t fi11222@192.168.0.52'.split(' '),
-                          stdin=p1.stdout, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    p1.stdout.close()  # Allow p1 to receive a SIGPIPE if p2 exits.
-    output, err = p2.communicate()
-    print('stdout:', output)
-    print('stderr:', err)
+
+    for l_table in l_tableList:
+        print('+++ Backuping' + l_table + 'remotely on main server')
+        l_remoteCommand = r'/usr/bin/pg_dump --host localhost --port 5432 --username "postgres" ' + \
+                          r'--format custom --verbose ' + \
+                          r'--file "/home/fi11222/disk-partage/Vrac/TB_PHANTOM.backup" ' + \
+                          r'--table "\"FBWatch\".\"{0}\"" "FBWatch"'.format(l_table)
+
+        executeRemotely(l_remoteCommand)
 
     for l_table in l_tableList:
         print('+++ Restoring locally:', l_table)
@@ -598,6 +597,15 @@ def updateMainDB():
 
     g_connectorRead.close()
     g_connectorWrite.close()
+
+def executeRemotely(p_command):
+    print('Remote command:', p_command)
+    p = subprocess.Popen(
+        'sshpass -p 15Eyyaka ssh -t -t fi11222@192.168.0.52 {0}'.format(l_remoteCommand).split(' '),
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    l_output, l_err = p.communicate()
+    print('+++ stdout:', l_output.decode('utf-8').strip())
+    print('+++ stderr:', l_err.decode('utf-8').strip())
 
 # ---------------------------------------------------- Main ------------------------------------------------------------
 if __name__ == "__main__":
@@ -644,11 +652,18 @@ if __name__ == "__main__":
 
     if c.sshTest:
         print('ssh test')
-        p = subprocess.Popen('sshpass -p 15Eyyaka ssh -t -t fi11222@192.168.0.52 ll'.split(' '),
-                         stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        l_remoteCommand = r'/usr/bin/pg_dump --host localhost --port 5432 --username "postgres" ' +\
+                          r'--format custom --verbose ' +\
+                          r'--file "/home/fi11222/disk-partage/Vrac/TB_PHANTOM.backup" ' +\
+                          r'--table "\"FBWatch\".\"TB_PHANTOM\"" "FBWatch"'
+
+        print('Remote command:', l_remoteCommand)
+        p = subprocess.Popen(
+            'sshpass -p 15Eyyaka ssh -t -t fi11222@192.168.0.52 {0}'.format(l_remoteCommand).split(' '),
+             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         l_output, l_err = p.communicate()
-        print('stdout:', l_output)
-        print('stderr:', l_err)
+        print('+++ stdout:', l_output.decode('utf-8'))
+        print('+++ stderr:', l_err.decode('utf-8'))
         sys.exit()
 
     if os.geteuid() != 0:
