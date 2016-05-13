@@ -11,7 +11,16 @@ import urllib.error
 from threading  import Thread
 from queue import Queue, Empty  # python 3.x
 import sys
-import os
+
+# fi11222 must be added to the sudoer file as a NOPASSWD sudo user
+# http://askubuntu.com/questions/334318/sudoers-file-enable-nopasswd-for-user-all-commands
+
+# sudo visudo --->
+# add:
+# fi11222<TAB>ALL=NOPASSWD: ALL
+# under:
+# root    ALL=(ALL:ALL) ALL
+
 # ---------------------------------------------------- Functions -------------------------------------------------------
 
 # Calls a "what is my Ip" web service to get own IP
@@ -37,9 +46,6 @@ def getOwnIp():
 # If alive --> everything ok
 # if dead (poll() not None) --> error of some kind
 def switchonVpn(p_config, p_verbose=True):
-    if os.geteuid() != 0:
-        print('Must be root')
-        sys.exit()
 
     # function to output lines as a queue
     # (1) from http://stackoverflow.com/questions/375427/non-blocking-read-on-a-subprocess-pipe-in-python
@@ -57,7 +63,7 @@ def switchonVpn(p_config, p_verbose=True):
 
     # calls openvpn
     ON_POSIX = 'posix' in sys.builtin_module_names
-    l_process = Popen(['openvpn', p_config],
+    l_process = Popen(['sudo', 'openvpn', p_config],
                       stdout=PIPE,
                       stderr=PIPE,
                       cwd='/etc/openvpn',
@@ -126,6 +132,7 @@ if __name__ == "__main__":
     #l_process = switchonVpn('TorGuard.Swiss.ovpn', p_verbose=True)
 
     if l_process.poll() is None:
-        l_process.kill()
+        #l_process.kill()
+        Popen(['sudo', 'kill', '-9', str(l_process.pid)])
 
     print('Ip now:', getOwnIp())

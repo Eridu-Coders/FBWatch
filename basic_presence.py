@@ -557,7 +557,7 @@ def cacheData():
 
 
     for l_table in l_tableList:
-        print('+++ Backuping' + l_table + 'remotely on main server')
+        print('+++ Backuping', l_table, 'remotely on main server')
         l_remoteCommand = r'/usr/bin/pg_dump --host localhost --port 5432 --username "postgres" ' + \
                           r'--format custom --verbose ' + \
                           r'--file "/home/fi11222/disk-partage/Vrac/TB_PHANTOM.backup" ' + \
@@ -601,7 +601,7 @@ def updateMainDB():
 def executeRemotely(p_command):
     print('Remote command:', p_command)
     p = subprocess.Popen(
-        'sshpass -p 15Eyyaka ssh -t -t fi11222@192.168.0.52 {0}'.format(l_remoteCommand).split(' '),
+        'sshpass -p 15Eyyaka ssh -t -t fi11222@192.168.0.52 {0}'.format(p_command).split(' '),
         stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     l_output, l_err = p.communicate()
     print('+++ stdout:', l_output.decode('utf-8').strip())
@@ -614,7 +614,7 @@ if __name__ == "__main__":
     print('|                                                            |')
     print('| Basic facebook presence                                    |')
     print('|                                                            |')
-    print('| v. 2.1 - 12/05/2016                                        |')
+    print('| v. 2.3 - 13/05/2016                                        |')
     print('+------------------------------------------------------------+')
 
     random.seed()
@@ -662,12 +662,8 @@ if __name__ == "__main__":
             'sshpass -p 15Eyyaka ssh -t -t fi11222@192.168.0.52 {0}'.format(l_remoteCommand).split(' '),
              stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         l_output, l_err = p.communicate()
-        print('+++ stdout:', l_output.decode('utf-8'))
-        print('+++ stderr:', l_err.decode('utf-8'))
-        sys.exit()
-
-    if os.geteuid() != 0:
-        print('Must be root')
+        print('+++ stdout:', l_output.decode('utf-8').strip())
+        print('+++ stderr:', l_err.decode('utf-8').strip())
         sys.exit()
 
     if c.Test:
@@ -735,7 +731,8 @@ if __name__ == "__main__":
                 # only one user if in test mode --> no need to loop
                 break
             elif l_process.poll() is None:
-                l_process.kill()
+                # kill the VPN process
+                subprocess.Popen(['sudo', 'kill', '-9', str(l_process.pid)])
 
     except Exception as e:
         print('Unknown Exception: {0}'.format(repr(e)))
