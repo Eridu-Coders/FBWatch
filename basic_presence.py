@@ -145,7 +145,7 @@ def likeOrComment(p_idPost, p_driver, p_message=''):
 
             l_countLoop = 0
             l_retVal = True
-            while l_likeLink.text != 'Unlike':
+            while l_likeLink.text != 'Unlike' and l_likeLink.text != "Je n’aime plus":
                 l_likeLink.click()
                 time.sleep(.5)
                 l_likeLink = l_driver.find_element_by_xpath(
@@ -558,10 +558,10 @@ def cacheData():
 
     for l_table in l_tableList:
         print('+++ Backuping', l_table, 'remotely on main server')
-        l_remoteCommand = r'/usr/bin/pg_dump --host localhost --port 5432 --username "postgres" ' + \
-                          r'--format custom --verbose ' + \
-                          r'--file "/home/fi11222/disk-partage/Vrac/TB_PHANTOM.backup" ' + \
-                          r'--table "\"FBWatch\".\"{0}\"" "FBWatch"'.format(l_table)
+        l_remoteCommand = (r'/usr/bin/pg_dump --host localhost --port 5432 --username "postgres" ' +
+                           r'--format custom --verbose ' +
+                           r'--file "/home/fi11222/disk-partage/Vrac/{0}.backup" ' +
+                           r'--table "\"FBWatch\".\"{0}\"" "FBWatch"').format(l_table)
 
         executeRemotely(l_remoteCommand)
 
@@ -625,7 +625,8 @@ if __name__ == "__main__":
     l_parser.add_argument('-CleanLocal', help='Only cleans up local DB', action='store_true')
     l_parser.add_argument('-Test', help='No VPN and only KA as user', action='store_true')
     l_parser.add_argument('-gc', help='Test gen comment', action='store_true')
-    l_parser.add_argument('-sshTest', help='Test remote command execution', action='store_true')
+    l_parser.add_argument('-SshTest', help='Test remote command execution', action='store_true')
+    l_parser.add_argument('-NoCache', help='Do not update local DB cache', action='store_true')
 
     # dummy class to receive the parsed args
     class C:
@@ -635,7 +636,8 @@ if __name__ == "__main__":
             self.CleanLocal = False
             self.Test = False
             self.gc = False
-            self.sshTest = False
+            self.SshTest = False
+            self.NoCache = False
 
     # do the argument parse
     c = C()
@@ -650,7 +652,7 @@ if __name__ == "__main__":
             print(i, genComment())
         sys.exit()
 
-    if c.sshTest:
+    if c.SshTest:
         print('ssh test')
         l_remoteCommand = r'/usr/bin/pg_dump --host localhost --port 5432 --username "postgres" ' +\
                           r'--format custom --verbose ' +\
@@ -687,7 +689,8 @@ if __name__ == "__main__":
         if c.CleanLocal:
             sys.exit()
 
-        cacheData()
+        if not c.NoCache:
+            cacheData()
 
         # switch to local DB to avoid being cut off by VPN
         g_connectorRead = psycopg2.connect(
@@ -711,6 +714,9 @@ if __name__ == "__main__":
         l_cursor.execute(l_query)
 
         for l_phantomId, l_phantomPwd, l_vpn in l_cursor:
+            l_phantomId = l_phantomId.strip()
+            l_phantomPwd = l_phantomPwd.strip()
+
             if c.Test:
                 # test parameters and no VPN
                 l_phantomId = 'kabir.eridu@gmail.com'
@@ -719,6 +725,8 @@ if __name__ == "__main__":
                 l_process = switchonVpn(l_vpn, p_verbose=True)
 
             if c.Test or l_process.poll() is None:
+                print('l_phantomId :', l_phantomId)
+                print('l_phantomPwd:', l_phantomPwd)
                 l_driver = loginAs(l_phantomId, l_phantomPwd, p_api=False)
 
                 if not c.NoLikes:

@@ -53,7 +53,9 @@ def loginAsScrape(p_user, p_passwd):
 
         l_userInput.send_keys(p_user)
 
-        l_pwdInput = l_driver.find_element_by_xpath('//td/input[@id="pass"]')
+        l_pwdInput = WebDriverWait(l_driver, 15).until(
+            EC.presence_of_element_located((By.XPATH, '//td/input[@id="pass"]')))
+
         l_pwdInput.send_keys(p_passwd)
 
         # loginbutton
@@ -190,7 +192,7 @@ if __name__ == "__main__":
     print('|                                                            |')
     print('| Log-in as "X" on Facebook                                  |')
     print('|                                                            |')
-    print('| v. 2.0 - 10/05/2016                                        |')
+    print('| v. 2.1 - 13/05/2016                                        |')
     print('+------------------------------------------------------------+')
 
     # l_driver = loginAs('kabir.eridu@gmail.com', '12Alhamdulillah')
@@ -199,5 +201,5 @@ if __name__ == "__main__":
     #print('l_accessToken:', l_accessToken)
     #l_driver.quit()
 
-    l_driver = loginAs('kabir.eridu@gmail.com', '12Alhamdulillah', p_api=False)
+    l_driver = loginAs('julienmarc.habib@gmail.com', '15Eyyaka', p_api=False)
     l_driver.quit()
