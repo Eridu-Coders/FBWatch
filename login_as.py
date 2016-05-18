@@ -165,7 +165,7 @@ def loginAsAPI(p_user, p_passwd):
         # retrieve token value from the status line
         l_count = 0
         while len(l_status.text.split('|')) < 2:
-            print('Waiting for status update', l_count)
+            print('Waiting for status update in login page', l_count)
             time.sleep(.1)
             l_count += 1
             if l_count >= 300:

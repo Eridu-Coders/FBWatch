@@ -19,7 +19,7 @@ from selenium.webdriver.common.by import By
 from selenium.common import exceptions as EX
 
 from login_as import loginAs
-from openvpn import switchonVpn
+from openvpn import switchonVpn, getOwnIp
 
 # to get access to a newly installed PostgreSQL server
 # http://www.postgresql.org/message-id/4D958A35.8030501@hogranch.com
@@ -33,7 +33,9 @@ G_WAIT_FB_MAX = G_WAIT_FB_MIN + 60
 g_connectorRead = None
 g_connectorWrite = None
 
-G_LIMIT_TOP_USERS = 200
+# number of rows kept by the likes and comment distribution main queries
+G_LIMIT_LIKES = 600                     # But only one in 3 will be actually liked
+G_LIMIT_COMM = 250                      # But only one in 5 will be actually commented
 
 g_verbose = True
 
@@ -298,25 +300,27 @@ def distributeLikes(p_driver, p_phantom):
             "X"."ID_OBJ" is null
         order by "Z"."TTCOUNT" desc
         limit {0}
-    """.format(G_LIMIT_TOP_USERS)
+    """.format(G_LIMIT_LIKES)
 
     try:
         l_cursor.execute(l_query)
 
         l_count = 0
         for l_idUser, l_userName, l_commId, l_commTxt in l_cursor:
-            if len(l_commTxt) > 50:
-                l_commTxt = l_commTxt[0:50] + '...'
+            # only one in 3
+            if random.randint(0, 2) == 0:
+                if len(l_commTxt) > 50:
+                    l_commTxt = l_commTxt[0:50] + '...'
 
-            print('{4:<3} [{0:<20}] {1:<30} --> [{2:<40}] {3}'.format(
-                l_idUser, l_userName, l_commId, l_commTxt, l_count))
+                print('{4:<3} [{0:<20}] {1:<30} --> [{2:<40}] {3}'.format(
+                    l_idUser, l_userName, l_commId, l_commTxt, l_count))
 
-            if likeOrComment(l_commId, p_driver):
-                logOneLike(l_idUser, l_commId, p_phantom)
-            else:
-                logOneLike(l_idUser, l_commId, '<Dead>')
+                if likeOrComment(l_commId, p_driver):
+                    logOneLike(l_idUser, l_commId, p_phantom)
+                else:
+                    logOneLike(l_idUser, l_commId, '<Dead>')
 
-            l_count += 1
+                l_count += 1
 
     except Exception as e:
         print('Unknown Exception: {0}'.format(repr(e)))
@@ -355,27 +359,29 @@ def distributeComments(p_driver, p_phantom):
             "X"."ID_OBJ" is null
         order by "Z"."TTCOUNT" desc
         limit {0}
-    """.format(G_LIMIT_TOP_USERS)
+    """.format(G_LIMIT_COMM)
 
     try:
         l_cursor.execute(l_query)
 
         l_count = 0
         for l_idUser, l_userName, l_commId, l_commTxt in l_cursor:
-            if len(l_commTxt) > 50:
-                l_commTxt = l_commTxt[0:50] + '...'
+            # only one in 5 is perfomed
+            if random.randint(0, 4) == 0:
+                if len(l_commTxt) > 50:
+                    l_commTxt = l_commTxt[0:50] + '...'
 
-            l_commentNew = genComment()
+                l_commentNew = genComment()
 
-            print('{4:<3} [{0:<20}] {1:<30} --> [{2:<40}] {3} --> {5}'.format(
-                l_idUser, l_userName, l_commId, l_commTxt, l_count, l_commentNew))
+                print('{4:<3} [{0:<20}] {1:<30} --> [{2:<40}] {3} --> {5}'.format(
+                    l_idUser, l_userName, l_commId, l_commTxt, l_count, l_commentNew))
 
-            if likeOrComment(l_commId, p_driver, l_commentNew):
-                logOneComment(l_idUser, l_commId, l_commentNew, p_phantom)
-            else:
-                logOneComment(l_idUser, l_commId, '', '<Dead>')
+                if likeOrComment(l_commId, p_driver, l_commentNew):
+                    logOneComment(l_idUser, l_commId, l_commentNew, p_phantom)
+                else:
+                    logOneComment(l_idUser, l_commId, '', '<Dead>')
 
-            l_count += 1
+                l_count += 1
 
     except Exception as e:
         print('Unknown Exception: {0}'.format(repr(e)))
@@ -607,6 +613,72 @@ def executeRemotely(p_command):
     print('+++ stdout:', l_output.decode('utf-8').strip())
     print('+++ stderr:', l_err.decode('utf-8').strip())
 
+def choosePhantom():
+    # Will be executed before VPN cuts us off
+    g_connectorRead = psycopg2.connect(
+        host='192.168.0.52',
+        database="FBWatch",
+        user="postgres",
+        password="murugan!")
+
+    l_cursor = g_connectorRead.cursor()
+
+    l_query = """
+        select * from "FBWatch"."TB_PHANTOM"
+    """
+
+    l_phantomList = []
+    try:
+        l_cursor.execute(l_query)
+
+        for l_phantomId, l_phantomPwd, l_vpn in l_cursor:
+            l_phantomId = l_phantomId.strip()
+            l_phantomPwd = l_phantomPwd.strip()
+
+            l_phantomList += [(l_phantomId, l_phantomPwd, l_vpn)]
+    except Exception as e:
+        print('Unknown Exception: {0}'.format(repr(e)))
+        print(l_query)
+        sys.exit()
+
+    l_cursor.close()
+
+    g_connectorRead.close()
+
+    for i in range(len(l_phantomList)):
+        l_phantomId = l_phantomList[i][0]
+        l_phantomPwd = l_phantomList[i][1]
+        l_phantomVPN = l_phantomList[i][2]
+
+        print('[{0:<2}] {1:<30} --> {2}'.format(i, l_phantomId, l_phantomVPN))
+
+    l_choiceNum = None
+    l_finished = False
+    while not l_finished:
+        l_choice = input('Which one [0 to {0}]: '.format(len(l_phantomList)-1))
+        try:
+            l_choiceNum = int(l_choice)
+        except ValueError:
+            print('Not a number')
+            continue
+
+        if l_choiceNum < 0 or l_choiceNum >= len(l_phantomList):
+            print('Must be between 0and {0}'.format(len(l_phantomList)))
+        else:
+            l_finished = True
+
+    l_process = switchonVpn(l_phantomList[l_choiceNum][2], p_verbose=True)
+    l_driver = loginAs(l_phantomList[l_choiceNum][0], l_phantomList[l_choiceNum][1], p_api=False)
+
+    l_quit = input('Finished? ')
+
+    l_driver.close()
+    if l_process.poll() is None:
+        # kill the VPN process
+        print('Killing process pid:', l_process.pid)
+        subprocess.Popen(['sudo', 'kill', '-15', str(l_process.pid)])
+        print('IP:', getOwnIp())
+
 # ---------------------------------------------------- Main ------------------------------------------------------------
 if __name__ == "__main__":
     print('+------------------------------------------------------------+')
@@ -614,28 +686,30 @@ if __name__ == "__main__":
     print('|                                                            |')
     print('| Basic facebook presence                                    |')
     print('|                                                            |')
-    print('| v. 2.3 - 13/05/2016                                        |')
+    print('| v. 2.4 - 18/05/2016                                        |')
     print('+------------------------------------------------------------+')
 
     random.seed()
 
     l_parser = argparse.ArgumentParser(description='Download FB data.')
-    l_parser.add_argument('-NoLikes', help='Do not perform likes distribution', action='store_true')
+    l_parser.add_argument('--NoLikes', help='Do not perform likes distribution', action='store_true')
     l_parser.add_argument('-q', help='Quiet: less progress info', action='store_true')
-    l_parser.add_argument('-CleanLocal', help='Only cleans up local DB', action='store_true')
+    l_parser.add_argument('--CleanLocal', help='Only cleans up local DB', action='store_true')
     l_parser.add_argument('-Test', help='No VPN and only KA as user', action='store_true')
     l_parser.add_argument('-gc', help='Test gen comment', action='store_true')
-    l_parser.add_argument('-SshTest', help='Test remote command execution', action='store_true')
-    l_parser.add_argument('-NoCache', help='Do not update local DB cache', action='store_true')
+    l_parser.add_argument('--SshTest', help='Test remote command execution', action='store_true')
+    l_parser.add_argument('--NoCache', help='Do not update local DB cache', action='store_true')
+    l_parser.add_argument('-l', help='List phantoms and login as one', action='store_true')
 
     # dummy class to receive the parsed args
     class C:
         def __init__(self):
-            self.NoLikes = False
+            self.l = False
             self.q = False
+            self.gc = False
+            self.NoLikes = False
             self.CleanLocal = False
             self.Test = False
-            self.gc = False
             self.SshTest = False
             self.NoCache = False
 
@@ -643,6 +717,10 @@ if __name__ == "__main__":
     c = C()
     l_parser.parse_args()
     parser = l_parser.parse_args(namespace=c)
+
+    if c.l:
+        choosePhantom()
+        sys.exit()
 
     if c.q:
         g_verbose = False
