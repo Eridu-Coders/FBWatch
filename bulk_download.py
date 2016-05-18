@@ -25,8 +25,10 @@ G_WAIT_FB = 60 * 60                         # wait period after a request limit 
 
 g_connector = None                          # MySQL connector
 
-g_objectFound = 0                           # number of objects retrieved
-g_objectStored = 0                          # number of objects stored
+g_objectStoreAttempts = 0                   # number of times an object store has been attempted
+g_objectStored = 0                          # number of objects actually stored
+g_postRetrieved = 0
+g_commentRetrieved = 0
 
 g_FBToken = None                            # current FB access token
 
@@ -65,9 +67,9 @@ def storeObject(p_padding, p_type, p_date,
                 p_raw=''):
 
     global g_objectStored
-    global g_objectFound
+    global g_objectStoreAttempts
 
-    g_objectFound += 1
+    g_objectStoreAttempts += 1
 
     l_stored = False
 
@@ -168,8 +170,8 @@ def storeObject(p_padding, p_type, p_date,
 
     l_cursor.close()
 
-    print('{0}Object counts: {1} found / {2} stored'.format(
-        p_padding, g_objectFound, g_objectStored))
+    print('{0}Object counts: {1} attempts / {2} stored / {3} posts retrieved / {4} comments retrieved'.format(
+        p_padding, g_objectStoreAttempts, g_objectStored, g_postRetrieved, g_commentRetrieved))
 
     return l_stored
 
@@ -311,6 +313,35 @@ def creatLikeLink(p_userIdInternal, p_objIdInternal, p_date):
 
     l_cursor.close()
 
+def logCommDnl(p_objId, p_fatherId, p_type, p_name):
+    l_cursor = g_connector.cursor()
+
+    l_query = """
+        INSERT INTO "FBWatch"."TB_COMM_DNL"("ID_OBJ","ID_FATHER","DT_CRE","ST_TYPE","TX_NAME")
+        VALUES( '{0}', '{1}', CURRENT_TIMESTAMP, '{2}', '{3}' )
+    """.format(
+        p_objId,
+        p_fatherId,
+        p_type,
+        cleanForInsert(p_name)
+    )
+
+    # print(l_query)
+    try:
+        l_cursor.execute(l_query)
+        g_connector.commit()
+    except psycopg2.IntegrityError as e:
+        if g_verbose:
+            print('Like link already exists')
+        #print('PostgreSQL: {0}'.format(e))
+        g_connector.rollback()
+    except Exception as e:
+        print('TB_LIKE Unknown Exception: {0}'.format(repr(e)))
+        print(l_query)
+        sys.exit()
+
+    l_cursor.close()
+
 def setLikeFlag(p_id):
     l_cursor = g_connector.cursor()
 
@@ -331,6 +362,24 @@ def setLikeFlag(p_id):
 
     l_cursor.close()
 
+def purgeDnlComm():
+    l_cursor = g_connector.cursor()
+
+    l_query = """
+        delete from "FBWatch"."TB_COMM_DNL"
+    """
+
+    # print(l_query)
+    try:
+        l_cursor.execute(l_query)
+        g_connector.commit()
+    except Exception as e:
+        print('TB_COMM_DNL Unknown Exception: {0}'.format(repr(e)))
+        print(l_query)
+        sys.exit()
+
+    l_cursor.close()
+
 def getOptionalField(p_json, p_field):
     l_value = ''
     l_valueShort = ''
@@ -345,7 +394,9 @@ def getOptionalField(p_json, p_field):
     return l_value, l_valueShort
 
 def getPages():
-    # list of likes from john.braekernell@yahoo.com --> starting point
+    purgeDnlComm()
+
+    # list of likes from user --> starting point
     l_request = 'https://graph.facebook.com/{0}/me/likes?access_token={1}'.format(
         G_API_VERSION, g_FBToken)
     l_response = performRequest(l_request)
@@ -389,6 +440,7 @@ def getPages():
             l_finished = True
 
 def getPostsFromPage(p_id):
+    global g_postRetrieved
     # get list of posts in this page's feed
 
     l_fieldList = 'id,created_time,from,story,message,' + \
@@ -410,6 +462,8 @@ def getPostsFromPage(p_id):
     l_finished = False
     while not l_finished:
         for l_post in l_responseData['data']:
+            g_postRetrieved += 1
+
             l_postId = l_post['id']
             l_postDate = l_post['created_time']
             l_type = l_post['type']
@@ -493,6 +547,7 @@ def getPostsFromPage(p_id):
                     p_raw           =json.dumps(l_post['attachment']) if 'attachment' in l_post.keys() else ''
                 ):
                 # get comments
+                logCommDnl(l_postId, p_id, 'Post', l_name)
                 getComments(l_postId, l_postId, p_id, 0)
             else:
                 # if already in DB ---> break loop
@@ -514,6 +569,8 @@ def getPostsFromPage(p_id):
                 break
 
 def getComments(p_id, p_postId, p_pageId, p_depth):
+    global g_commentRetrieved
+
     l_depthPadding = ' ' * ((p_depth + 2) * 3)
 
     # get list of posts in this page's feed
@@ -533,6 +590,8 @@ def getComments(p_id, p_postId, p_pageId, p_depth):
     l_commCount = 0
     while True:
         for l_comment in l_responseData['data']:
+            g_commentRetrieved += 1
+
             l_commentId = l_comment['id']
             l_commentDate = l_comment['created_time']
             l_commentLikes = int(l_comment['like_count'])
@@ -611,6 +670,7 @@ def getComments(p_id, p_postId, p_pageId, p_depth):
 
             # get comments
             if l_commentCCount > 0:
+                logCommDnl(l_commentId, p_id, 'Comm', l_messageShort)
                 getComments(l_commentId, p_postId, p_pageId, p_depth+1)
 
         if 'paging' in l_responseData.keys() and 'next' in l_responseData['paging'].keys():
@@ -625,11 +685,20 @@ def getComments(p_id, p_postId, p_pageId, p_depth):
     print('{0}comment download count -->'.format(l_depthPadding[:-3]), l_commCount)
 
 def updatePosts():
+    global g_postRetrieved
+
+    purgeDnlComm()
+
     l_cursor = g_connector.cursor()
 
-    # all posts not older than G_DAYS_DEPTH days and not already updated in the last day
+    # All posts not older than G_DAYS_DEPTH days and not already updated in the last day
+    # Among these, comments to be downloaded only for those which were not created today
+    # ("DT_LAST_UPDATE" not null)
     l_query = """
-        select "ID", "ID_PAGE"
+        select
+            "ID"
+            , "ID_PAGE"
+            , case when "DT_LAST_UPDATE" is null then '' else 'X' end "COMMENT_DOWNLOAD"
         from "FBWatch"."TB_OBJ"
         where
             "ST_TYPE" = 'Post'
@@ -644,7 +713,8 @@ def updatePosts():
     try:
         l_cursor.execute(l_query)
 
-        for l_postId, l_pageId in l_cursor:
+        for l_postId, l_pageId, l_commentFlag in l_cursor:
+            g_postRetrieved += 1
             # get post data
             l_fieldList = 'id,created_time,from,story,message,' + \
                           'caption,description,icon,link,name,object_id,picture,place,shares,source,type'
@@ -659,6 +729,9 @@ def updatePosts():
             l_shares = int(l_responseData['shares']['count']) if 'shares' in l_responseData.keys() else 0
             print('============= UPDATE ==============================================')
             print('Post ID     :', l_postId)
+            if 'created_time' in l_responseData.keys():
+                print('Post date   :', l_responseData['created_time'])
+            print('Comm. dnl ? :', l_commentFlag)
 
             l_name, l_nameShort             = getOptionalField(l_responseData, 'name')
             l_caption, l_captionShort       = getOptionalField(l_responseData, 'caption')
@@ -677,7 +750,7 @@ def updatePosts():
             # get post likes
             l_request = ('https://graph.facebook.com/{0}/{1}/likes?limit={2}&' +
                          'access_token={3}&summary=true').format(
-                G_API_VERSION, l_postId, G_LIMIT, g_FBToken, l_fieldList)
+                G_API_VERSION, l_postId, 25, g_FBToken, l_fieldList)
             # print('   l_request:', l_request)
             l_response = performRequest(l_request)
 
@@ -685,9 +758,12 @@ def updatePosts():
             l_likeCount = 0
             if 'summary' in l_responseData.keys():
                 l_likeCount = int(l_responseData['summary']['total_count'])
-            print('likes       :', l_likeCount)
+            if g_verbose:
+                print('likes       :', l_likeCount)
 
-            if updateObject(l_postId, l_shares, l_likeCount, l_name, l_caption, l_description, l_story, l_message):
+            if updateObject(l_postId, l_shares, l_likeCount, l_name, l_caption, l_description, l_story, l_message)\
+                    and l_commentFlag == 'X':
+                logCommDnl(l_postId, l_pageId, 'Post', l_name)
                 getComments(l_postId, l_postId, l_pageId, 0)
 
     except Exception as e:
@@ -1004,13 +1080,14 @@ if __name__ == "__main__":
     print('|                                                            |')
     print('| Bulk facebook download of posts/comments                   |')
     print('|                                                            |')
-    print('| v. 2.3 - 11/05/2016                                        |')
+    print('| v. 2.4 - 16/05/2016                                        |')
     print('| ---> migrated to PostgreSQL                                |')
     print('+------------------------------------------------------------+')
 
     l_parser = argparse.ArgumentParser(description='Download FB data.')
-    l_parser.add_argument('-NoPages', help='Do not perform primary download', action='store_true')
-    l_parser.add_argument('-NoUpdate', help='Do not perform object update', action='store_true')
+    l_parser.add_argument('--NoPages', help='Do not perform primary download', action='store_true')
+    l_parser.add_argument('--NoUpdate', help='Do not perform object update', action='store_true')
+    l_parser.add_argument('--NoLikes', help='Do not perform likes detail donwload', action='store_true')
     l_parser.add_argument('-q', help='Quiet: less progress info', action='store_true')
 
     # dummy class to receive the parsed args
@@ -1018,12 +1095,17 @@ if __name__ == "__main__":
         def __init__(self):
             self.NoPages = False
             self.NoUpdate = False
+            self.NoLikes = False
             self.q = False
 
     # do the argument parse
     c = C()
     l_parser.parse_args()
     parser = l_parser.parse_args(namespace=c)
+
+    if c.NoPages: print('Will not perform primary download')
+    if c.NoUpdate: print('Will not perform object update')
+    if c.NoLikes: print('Will not perform likes detail download')
 
     if c.q:
         g_verbose = False
@@ -1054,6 +1136,7 @@ if __name__ == "__main__":
     if not c.NoUpdate:
         updatePosts()
 
-    getLikesDetail()
+    if not c.NoLikes:
+        getLikesDetail()
 
     g_connector.close()
