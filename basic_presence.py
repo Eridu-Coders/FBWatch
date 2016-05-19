@@ -12,7 +12,6 @@ import argparse
 import os
 import subprocess
 
-from selenium import webdriver
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.by import By
@@ -27,6 +26,14 @@ from openvpn import switchonVpn, getOwnIp
 
 # postgres=> alter user postgres password 'apassword';
 # ---------------------------------------------------- Globals ---------------------------------------------------------
+# globals for the Phantom ID and password + the Selenium browser driver
+# These are necessary to allow periodic refresh of the driver in likeOrComment()
+g_phantomId = None
+g_phantomPwd = None
+g_driver = None
+
+g_browserActions = 0
+
 G_WAIT_FB_MIN = 30
 G_WAIT_FB_MAX = G_WAIT_FB_MIN + 60
 
@@ -128,17 +135,19 @@ def randomWait(p_minDelay, p_maxDelay):
         print('Waiting for {0:.2f} seconds ...'.format(l_wait))
         time.sleep(l_wait)
 
-def likeOrComment(p_idPost, p_driver, p_message=''):
-    p_driver.get('http://www.facebook.com/{0}'.format(p_idPost))
+def likeOrComment(p_idPost, p_message=''):
+    global g_browserActions
+    global g_driver
+    g_driver.get('http://www.facebook.com/{0}'.format(p_idPost))
 
     # ufi_highlighted_comment
     try:
-        l_commBlock = WebDriverWait(l_driver, 15).until(
+        l_commBlock = WebDriverWait(g_driver, 15).until(
             EC.presence_of_element_located((By.XPATH, '//div[@data-testid="ufi_highlighted_comment"]')))
 
         time.sleep(1)
         if len(p_message) == 0:
-            l_likeLink = WebDriverWait(l_driver, 15).until(
+            l_likeLink = WebDriverWait(g_driver, 15).until(
                 EC.presence_of_element_located(
                     (By.XPATH,
                     '//div[@data-testid="ufi_highlighted_comment"]//a[@class="UFILikeLink"]')
@@ -150,7 +159,7 @@ def likeOrComment(p_idPost, p_driver, p_message=''):
             while l_likeLink.text != 'Unlike' and l_likeLink.text != "Je n’aime plus":
                 l_likeLink.click()
                 time.sleep(.5)
-                l_likeLink = l_driver.find_element_by_xpath(
+                l_likeLink = g_driver.find_element_by_xpath(
                     '//div[@data-testid="ufi_highlighted_comment"]//a[@class="UFILikeLink"]')
 
                 if l_countLoop > 10:
@@ -163,7 +172,7 @@ def likeOrComment(p_idPost, p_driver, p_message=''):
                 print('Liked {0} -->'.format(p_idPost), re.sub('\s+', ' ', l_commBlock.text).strip())
         else:
             # UFIAddCommentInput _1osb _5yk1
-            l_commentZone = WebDriverWait(l_driver, 15).until(
+            l_commentZone = WebDriverWait(g_driver, 15).until(
                 EC.presence_of_element_located(
                     (By.XPATH,
                     '//div[@data-testid="ufi_reply_composer"]')
@@ -173,7 +182,7 @@ def likeOrComment(p_idPost, p_driver, p_message=''):
 
             l_retVal = True
             if g_verbose:
-                l_commBlock = l_driver.find_element_by_xpath('//div[@data-testid="ufi_highlighted_comment"]')
+                l_commBlock = g_driver.find_element_by_xpath('//div[@data-testid="ufi_highlighted_comment"]')
                 print('{0} -->'.format(p_idPost),
                       re.sub('\s+', ' ', l_commBlock.text).strip(),
                       '-->', p_message)
@@ -183,13 +192,21 @@ def likeOrComment(p_idPost, p_driver, p_message=''):
     except EX.WebDriverException as e:
         print('Unknown WebDriverException -->', e)
         if len(p_message) == 0:
-            l_likeLink = l_driver.find_element_by_xpath(
+            l_likeLink = g_driver.find_element_by_xpath(
                 '//div[@data-testid="ufi_highlighted_comment"]//a[@class="UFILikeLink"]')
             if l_likeLink.text == 'Unlike':
                 l_retVal = True
             else: l_retVal = False
         else:
             l_retVal = False
+
+    if l_retVal:
+        g_browserActions += 1
+
+    # reopen a new browser every 50 actions
+    if g_browserActions % 50 == 0 and g_browserActions > 0:
+        g_driver.close()
+        g_driver = loginAs(g_phantomId, g_phantomPwd, p_api=False)
 
     randomWait(G_WAIT_FB_MIN, G_WAIT_FB_MAX)
     return l_retVal
@@ -270,7 +287,7 @@ def logOneRiver(p_idPage, p_idPost, p_link, p_phantom):
     l_cursor.close()
 
 
-def distributeLikes(p_driver, p_phantom):
+def distributeLikes():
     print('+++ Likes Distribution +++')
     l_cursor = g_connectorRead.cursor()
 
@@ -315,8 +332,8 @@ def distributeLikes(p_driver, p_phantom):
                 print('{4:<3} [{0:<20}] {1:<30} --> [{2:<40}] {3}'.format(
                     l_idUser, l_userName, l_commId, l_commTxt, l_count))
 
-                if likeOrComment(l_commId, p_driver):
-                    logOneLike(l_idUser, l_commId, p_phantom)
+                if likeOrComment(l_commId):
+                    logOneLike(l_idUser, l_commId, g_phantomId)
                 else:
                     logOneLike(l_idUser, l_commId, '<Dead>')
 
@@ -329,7 +346,7 @@ def distributeLikes(p_driver, p_phantom):
 
     l_cursor.close()
 
-def distributeComments(p_driver, p_phantom):
+def distributeComments():
     print('*** Comments Distribution ***')
     l_cursor = g_connectorRead.cursor()
 
@@ -376,8 +393,8 @@ def distributeComments(p_driver, p_phantom):
                 print('{4:<3} [{0:<20}] {1:<30} --> [{2:<40}] {3} --> {5}'.format(
                     l_idUser, l_userName, l_commId, l_commTxt, l_count, l_commentNew))
 
-                if likeOrComment(l_commId, p_driver, l_commentNew):
-                    logOneComment(l_idUser, l_commId, l_commentNew, p_phantom)
+                if likeOrComment(l_commId, l_commentNew):
+                    logOneComment(l_idUser, l_commId, l_commentNew, g_phantomId)
                 else:
                     logOneComment(l_idUser, l_commId, '', '<Dead>')
 
@@ -433,8 +450,8 @@ def distributeRivers(p_driver, p_phantom):
             print('{0:<3} [{1:<20}/{2:<20}] {3:<30} --> [{4}]'.format(
                 l_count, l_idPage, l_idPost, l_message, l_newLink))
 
-            if likeOrComment(l_idPost, p_driver, l_newLink):
-                logOneRiver(l_idPage, l_idPost, l_newLink, p_phantom)
+            if likeOrComment(l_idPost, l_newLink):
+                logOneRiver(l_idPage, l_idPost, l_newLink, g_phantomId)
             else:
                 logOneRiver(l_idPage, l_idPost, '', '<Dead>')
 
@@ -614,7 +631,7 @@ def executeRemotely(p_command):
     print('+++ stderr:', l_err.decode('utf-8').strip())
 
 def choosePhantom():
-    # Will be executed before VPN cuts us off
+    # DB operations Will be executed before VPN cuts us off
     g_connectorRead = psycopg2.connect(
         host='192.168.0.52',
         database="FBWatch",
@@ -647,7 +664,6 @@ def choosePhantom():
 
     for i in range(len(l_phantomList)):
         l_phantomId = l_phantomList[i][0]
-        l_phantomPwd = l_phantomList[i][1]
         l_phantomVPN = l_phantomList[i][2]
 
         print('[{0:<2}] {1:<30} --> {2}'.format(i, l_phantomId, l_phantomVPN))
@@ -674,8 +690,8 @@ def choosePhantom():
 
     l_driver.close()
     if l_process.poll() is None:
-        # kill the VPN process
         print('Killing process pid:', l_process.pid)
+        # kill the VPN process (-15 = SIGTERM to allow child termination)
         subprocess.Popen(['sudo', 'kill', '-15', str(l_process.pid)])
         print('IP:', getOwnIp())
 
@@ -686,7 +702,7 @@ if __name__ == "__main__":
     print('|                                                            |')
     print('| Basic facebook presence                                    |')
     print('|                                                            |')
-    print('| v. 2.4 - 18/05/2016                                        |')
+    print('| v. 2.5 - 19/05/2016                                        |')
     print('+------------------------------------------------------------+')
 
     random.seed()
@@ -792,33 +808,33 @@ if __name__ == "__main__":
         l_cursor.execute(l_query)
 
         for l_phantomId, l_phantomPwd, l_vpn in l_cursor:
-            l_phantomId = l_phantomId.strip()
-            l_phantomPwd = l_phantomPwd.strip()
+            g_phantomId = l_phantomId.strip()
+            g_phantomPwd = l_phantomPwd.strip()
 
             if c.Test:
                 # test parameters and no VPN
-                l_phantomId = 'kabir.eridu@gmail.com'
-                l_phantomPwd = '12Alhamdulillah'
+                g_phantomId = 'kabir.eridu@gmail.com'
+                g_phantomPwd = '12Alhamdulillah'
             else:
                 l_process = switchonVpn(l_vpn, p_verbose=True)
 
             if c.Test or l_process.poll() is None:
-                print('l_phantomId :', l_phantomId)
-                print('l_phantomPwd:', l_phantomPwd)
-                l_driver = loginAs(l_phantomId, l_phantomPwd, p_api=False)
+                print('l_phantomId :', g_phantomId)
+                print('l_phantomPwd:', g_phantomPwd)
+                g_driver = loginAs(g_phantomId, g_phantomPwd, p_api=False)
 
                 if not c.NoLikes:
-                    distributeLikes(l_driver, l_phantomId)
-                distributeComments(l_driver, l_phantomId)
+                    distributeLikes()
+                distributeComments()
 
-                l_driver.quit()
+                g_driver.quit()
 
             if c.Test:
                 # only one user if in test mode --> no need to loop
                 break
             elif l_process.poll() is None:
-                # kill the VPN process
-                subprocess.Popen(['sudo', 'kill', '-9', str(l_process.pid)])
+                # kill the VPN process (-15 = SIGTERM to allow child termination)
+                subprocess.Popen(['sudo', 'kill', '-15', str(l_process.pid)])
 
     except Exception as e:
         print('Unknown Exception: {0}'.format(repr(e)))
