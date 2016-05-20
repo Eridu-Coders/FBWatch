@@ -229,10 +229,6 @@ def logOneLike(p_userId, p_objId, p_phantom):
         print('WARNING: cannot insert into TB_PRESENCE_LIKE')
         print('PostgreSQL: {0}'.format(e))
         g_connectorWrite.rollback()
-    except Exception as e:
-        print('TB_PRESENCE_LIKE Unknown Exception: {0}'.format(repr(e)))
-        print(l_query)
-        sys.exit()
 
     l_cursor.close()
 
@@ -254,10 +250,6 @@ def logOneComment(p_userId, p_objId, p_comm, p_phantom):
         print('WARNING: cannot insert into TB_PRESENCE_COMM')
         print('PostgreSQL: {0}'.format(e))
         g_connectorWrite.rollback()
-    except Exception as e:
-        print('TB_PRESENCE_COMM Unknown Exception: {0}'.format(repr(e)))
-        print(l_query)
-        sys.exit()
 
     l_cursor.close()
 
@@ -279,10 +271,6 @@ def logOneRiver(p_idPage, p_idPost, p_link, p_phantom):
         print('WARNING: cannot insert into TB_PRESENCE_RIVERS')
         print('PostgreSQL: {0}'.format(e))
         g_connectorWrite.rollback()
-    except Exception as e:
-        print('TB_PRESENCE_RIVERS Unknown Exception: {0}'.format(repr(e)))
-        print(l_query)
-        sys.exit()
 
     l_cursor.close()
 
@@ -319,30 +307,24 @@ def distributeLikes():
         limit {0}
     """.format(G_LIMIT_LIKES)
 
-    try:
-        l_cursor.execute(l_query)
+    l_cursor.execute(l_query)
 
-        l_count = 0
-        for l_idUser, l_userName, l_commId, l_commTxt in l_cursor:
-            # only one in 3
-            if random.randint(0, 2) == 0:
-                if len(l_commTxt) > 50:
-                    l_commTxt = l_commTxt[0:50] + '...'
+    l_count = 0
+    for l_idUser, l_userName, l_commId, l_commTxt in l_cursor:
+        # only one in 3
+        if random.randint(0, 2) == 0:
+            if len(l_commTxt) > 50:
+                l_commTxt = l_commTxt[0:50] + '...'
 
-                print('{4:<3} [{0:<20}] {1:<30} --> [{2:<40}] {3}'.format(
-                    l_idUser, l_userName, l_commId, l_commTxt, l_count))
+            print('{4:<3} [{0:<20}] {1:<30} --> [{2:<40}] {3}'.format(
+                l_idUser, l_userName, l_commId, l_commTxt, l_count))
 
-                if likeOrComment(l_commId):
-                    logOneLike(l_idUser, l_commId, g_phantomId)
-                else:
-                    logOneLike(l_idUser, l_commId, '<Dead>')
+            if likeOrComment(l_commId):
+                logOneLike(l_idUser, l_commId, g_phantomId)
+            else:
+                logOneLike(l_idUser, l_commId, '<Dead>')
 
-                l_count += 1
-
-    except Exception as e:
-        print('Unknown Exception: {0}'.format(repr(e)))
-        print(l_query)
-        sys.exit()
+            l_count += 1
 
     l_cursor.close()
 
@@ -378,32 +360,26 @@ def distributeComments():
         limit {0}
     """.format(G_LIMIT_COMM)
 
-    try:
-        l_cursor.execute(l_query)
+    l_cursor.execute(l_query)
 
-        l_count = 0
-        for l_idUser, l_userName, l_commId, l_commTxt in l_cursor:
-            # only one in 5 is perfomed
-            if random.randint(0, 4) == 0:
-                if len(l_commTxt) > 50:
-                    l_commTxt = l_commTxt[0:50] + '...'
+    l_count = 0
+    for l_idUser, l_userName, l_commId, l_commTxt in l_cursor:
+        # only one in 5 is perfomed
+        if random.randint(0, 4) == 0:
+            if len(l_commTxt) > 50:
+                l_commTxt = l_commTxt[0:50] + '...'
 
-                l_commentNew = genComment()
+            l_commentNew = genComment()
 
-                print('{4:<3} [{0:<20}] {1:<30} --> [{2:<40}] {3} --> {5}'.format(
-                    l_idUser, l_userName, l_commId, l_commTxt, l_count, l_commentNew))
+            print('{4:<3} [{0:<20}] {1:<30} --> [{2:<40}] {3} --> {5}'.format(
+                l_idUser, l_userName, l_commId, l_commTxt, l_count, l_commentNew))
 
-                if likeOrComment(l_commId, l_commentNew):
-                    logOneComment(l_idUser, l_commId, l_commentNew, g_phantomId)
-                else:
-                    logOneComment(l_idUser, l_commId, '', '<Dead>')
+            if likeOrComment(l_commId, l_commentNew):
+                logOneComment(l_idUser, l_commId, l_commentNew, g_phantomId)
+            else:
+                logOneComment(l_idUser, l_commId, '', '<Dead>')
 
-                l_count += 1
-
-    except Exception as e:
-        print('Unknown Exception: {0}'.format(repr(e)))
-        print(l_query)
-        sys.exit()
+            l_count += 1
 
     l_cursor.close()
 
