@@ -24,10 +24,10 @@ def getDriver():
     l_driver = webdriver.Firefox()
 
     # Resize the window to the screen width/height
-    l_driver.set_window_size(920, 1100)
+    l_driver.set_window_size(1200, 1100)
 
     # Move the window to position x/y
-    l_driver.set_window_position(1000, 1000)
+    l_driver.set_window_position(800, 0)
 
     return l_driver
 
