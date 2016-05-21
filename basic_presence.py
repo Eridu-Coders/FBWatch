@@ -20,6 +20,8 @@ from selenium.common import exceptions as EX
 from login_as import loginAs
 from openvpn import switchonVpn, getOwnIp
 
+from collections import namedtuple
+
 # to get access to a newly installed PostgreSQL server
 # http://www.postgresql.org/message-id/4D958A35.8030501@hogranch.com
 # $ sudo -u postgres psql
@@ -509,12 +511,19 @@ def performQuery(p_query, p_record=None, p_verbose=True):
 
     l_cursor.close()
 
-def slurpTable(p_table):
+def sendBackTable(p_table, p_dateField):
     l_cursor = g_connectorRead.cursor()
 
     l_query = ''
     try:
-        l_query = 'select * from "FBWatch"."{0}"'.format(p_table)
+        l_query = """
+            select * from "FBWatch"."{0}"
+            where "{1}" > (
+                select min("DT_LIKE")
+                from "FBWatch"."TB_PRESENCE_LIKE"
+                where "ID_PHANTOM" = '[Cache]'
+            )
+        """.format(p_table, p_dateField)
         l_cursor.execute(l_query)
 
         for l_record in l_cursor:
@@ -536,12 +545,7 @@ def cacheData():
     global g_connectorRead
     global g_connectorWrite
 
-    g_connectorRead = psycopg2.connect(
-        host='192.168.0.52',
-        database="FBWatch",
-        user="postgres",
-        password="murugan!")
-
+    # only write here (into the local DB). Reading from the main DB is done with pg_dump for speed's sake
     g_connectorWrite = psycopg2.connect(
         host='localhost',
         database="FBWatch",
@@ -570,7 +574,7 @@ def cacheData():
                   '--dbname "FBWatch" --verbose ' +
                   '"/home/fi11222/share-partage/Vrac/{0}.backup"'.format(l_table))
 
-    g_connectorRead.close()
+    logOneLike('[Cache]', '[Cache]', '[Cache]')
     g_connectorWrite.close()
 
 def updateMainDB():
@@ -589,10 +593,12 @@ def updateMainDB():
         user="postgres",
         password="murugan!")
 
-    l_tableList = ['TB_PRESENCE_COMM', 'TB_PRESENCE_LIKE']
-    for l_table in l_tableList:
+    l_suffixList = ['COMM', 'LIKE']
+    for l_suf in l_suffixList:
+        l_table = 'TB_PRESENCE_' + l_suf
+        l_dtField = 'DT_' + l_suf
         print('Sending', l_table, 'contents back to main server')
-        slurpTable(l_table)
+        sendBackTable(l_table, l_dtField)
 
     g_connectorRead.close()
     g_connectorWrite.close()
@@ -621,14 +627,15 @@ def choosePhantom():
     """
 
     l_phantomList = []
+    RecPhantom = namedtuple('RecPhantom', 'PhantomId PhantomPwd PhantomVpn FbUserId')
     try:
         l_cursor.execute(l_query)
 
-        for l_phantomId, l_phantomPwd, l_vpn in l_cursor:
+        for l_phantomId, l_phantomPwd, l_vpn, l_fbId in l_cursor:
             l_phantomId = l_phantomId.strip()
             l_phantomPwd = l_phantomPwd.strip()
 
-            l_phantomList += [(l_phantomId, l_phantomPwd, l_vpn)]
+            l_phantomList += [RecPhantom(l_phantomId, l_phantomPwd, l_vpn, l_fbId)]
     except Exception as e:
         print('Unknown Exception: {0}'.format(repr(e)))
         print(l_query)
@@ -639,8 +646,8 @@ def choosePhantom():
     g_connectorRead.close()
 
     for i in range(len(l_phantomList)):
-        l_phantomId = l_phantomList[i][0]
-        l_phantomVPN = l_phantomList[i][2]
+        l_phantomId = l_phantomList[i].PhantomId
+        l_phantomVPN = l_phantomList[i].PhantomVpn
 
         print('[{0:<2}] {1:<30} --> {2}'.format(i, l_phantomId, l_phantomVPN))
 
@@ -659,8 +666,8 @@ def choosePhantom():
         else:
             l_finished = True
 
-    l_process = switchonVpn(l_phantomList[l_choiceNum][2], p_verbose=True)
-    l_driver = loginAs(l_phantomList[l_choiceNum][0], l_phantomList[l_choiceNum][1], p_api=False)
+    l_process = switchonVpn(l_phantomList[l_choiceNum].PhantomVpn, p_verbose=True)
+    l_driver = loginAs(l_phantomList[l_choiceNum].PhantomId, l_phantomList[l_choiceNum].PhantomPwd, p_api=False)
 
     l_quit = input('Finished? ')
 
@@ -780,42 +787,37 @@ if __name__ == "__main__":
         select * from "FBWatch"."TB_PHANTOM"
     """
 
-    try:
-        l_cursor.execute(l_query)
+    # No exception catching here to allow full stack trace printout
+    l_cursor.execute(l_query)
 
-        for l_phantomId, l_phantomPwd, l_vpn in l_cursor:
-            g_phantomId = l_phantomId.strip()
-            g_phantomPwd = l_phantomPwd.strip()
+    for l_phantomId, l_phantomPwd, l_vpn, l_fbId in l_cursor:
+        g_phantomId = l_phantomId.strip()
+        g_phantomPwd = l_phantomPwd.strip()
 
-            if c.Test:
-                # test parameters and no VPN
-                g_phantomId = 'kabir.eridu@gmail.com'
-                g_phantomPwd = '12Alhamdulillah'
-            else:
-                l_process = switchonVpn(l_vpn, p_verbose=True)
+        if c.Test:
+            # test parameters and no VPN
+            g_phantomId = 'kabir.eridu@gmail.com'
+            g_phantomPwd = '12Alhamdulillah'
+        else:
+            l_process = switchonVpn(l_vpn, p_verbose=True)
 
-            if c.Test or l_process.poll() is None:
-                print('l_phantomId :', g_phantomId)
-                print('l_phantomPwd:', g_phantomPwd)
-                g_driver = loginAs(g_phantomId, g_phantomPwd, p_api=False)
+        if c.Test or l_process.poll() is None:
+            print('l_phantomId :', g_phantomId)
+            print('l_phantomPwd:', g_phantomPwd)
+            g_driver = loginAs(g_phantomId, g_phantomPwd, p_api=False)
 
-                if not c.NoLikes:
-                    distributeLikes()
-                distributeComments()
+            if not c.NoLikes:
+                distributeLikes()
+            distributeComments()
 
-                g_driver.quit()
+            g_driver.quit()
 
-            if c.Test:
-                # only one user if in test mode --> no need to loop
-                break
-            elif l_process.poll() is None:
-                # kill the VPN process (-15 = SIGTERM to allow child termination)
-                subprocess.Popen(['sudo', 'kill', '-15', str(l_process.pid)])
-
-    except Exception as e:
-        print('Unknown Exception: {0}'.format(repr(e)))
-        print(l_query)
-        sys.exit()
+        if c.Test:
+            # only one user if in test mode --> no need to loop
+            break
+        elif l_process.poll() is None:
+            # kill the VPN process (-15 = SIGTERM to allow child termination)
+            subprocess.Popen(['sudo', 'kill', '-15', str(l_process.pid)])
 
     l_cursor.close()
 
