@@ -21,6 +21,8 @@ import sys
 # under:
 # root    ALL=(ALL:ALL) ALL
 
+VPN_TIMEOUT = 60.0
+
 # ---------------------------------------------------- Functions -------------------------------------------------------
 
 # Calls a "what is my Ip" web service to get own IP
@@ -79,30 +81,25 @@ def switchonVpn(p_config, p_verbose=True):
 
     # wait for openvpn to establish connection
     while True:
+        l_elapsed = time.perf_counter() - t0
         # cancels process if openvpn closes unexpectedly or takes more than 30 seconds to connect
-        if l_process.poll() is not None or time.perf_counter() - t0 > 30.0:
-            l_out = l_process.stdout.readline().strip()
-            l_err = l_process.stderr.readline().strip()
-            print('+++', l_out)
-            print('---', l_err)
+        if l_process.poll() is not None or l_elapsed > VPN_TIMEOUT:
+            # send kill signal to process
+            Popen(['sudo', 'kill', '-15', str(l_process.pid)])
 
-            # kills process if still running
-            if l_process.poll() is not None:
-                l_process.kill()
-
+            l_process = None
             break
-
-        # l_out = l_process.stdout.readline().strip()
 
         # read line without blocking
         try:
             l_out = l_outputQueue.get_nowait().strip()  # or q.get(timeout=.1)
         except Empty:
+            print('{0:.2f}'.format(l_elapsed), end='\r')
             time.sleep(.1)
         else:  # got line
             # prints openvpn output if in verbose mode
             if p_verbose:
-                print('+++', l_out)
+                print('+++ [{0:.2f}] +++'.format(l_elapsed), l_out)
 
             # if "Initialization Sequence Completed" appears in message --> connexion established
             if re.search('Initialization Sequence Completed', l_out):
@@ -110,7 +107,7 @@ def switchonVpn(p_config, p_verbose=True):
                     print('OpenVpn pid :', l_process.pid)
                     # print new IP
                     print('New Ip      :', getOwnIp())
-                    print('Elapsed time:', time.perf_counter() - t0, 'seconds')
+                    print('Elapsed time: {0:.2f} seconds'.format(l_elapsed))
 
                 break
 
@@ -123,7 +120,7 @@ if __name__ == "__main__":
     print('|                                                            |')
     print('| Openvpn driver script                                      |')
     print('|                                                            |')
-    print('| v. 1.0 - 20/04/2016                                        |')
+    print('| v. 1.1 - 22/05/2016                                        |')
     print('+------------------------------------------------------------+')
 
     # TorGuard.United.Kingdom.ovpn

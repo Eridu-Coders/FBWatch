@@ -43,8 +43,8 @@ g_connectorRead = None
 g_connectorWrite = None
 
 # number of rows kept by the likes and comment distribution main queries
-G_LIMIT_LIKES = 600                     # But only one in 3 will be actually liked
-G_LIMIT_COMM = 250                      # But only one in 5 will be actually commented
+G_LIMIT_LIKES = 180                     # But only one in 3 will be actually liked
+G_LIMIT_COMM = 150                      # But only one in 5 will be actually commented
 
 g_verbose = True
 
@@ -667,12 +667,19 @@ def choosePhantom():
             l_finished = True
 
     l_process = switchonVpn(l_phantomList[l_choiceNum].PhantomVpn, p_verbose=True)
-    l_driver = loginAs(l_phantomList[l_choiceNum].PhantomId, l_phantomList[l_choiceNum].PhantomPwd, p_api=False)
+    if l_process is not None:
+        l_driver = loginAs(l_phantomList[l_choiceNum].PhantomId, l_phantomList[l_choiceNum].PhantomPwd, p_api=False)
+    else:
+        print('Cannot connect VPN')
+        l_driver = None
+    print('IP:', getOwnIp())
 
     l_quit = input('Finished? ')
 
-    l_driver.close()
-    if l_process.poll() is None:
+    if l_driver is not None:
+        l_driver.close()
+
+    if l_process is not None and l_process.poll() is None:
         print('Killing process pid:', l_process.pid)
         # kill the VPN process (-15 = SIGTERM to allow child termination)
         subprocess.Popen(['sudo', 'kill', '-15', str(l_process.pid)])
@@ -800,6 +807,9 @@ if __name__ == "__main__":
             g_phantomPwd = '12Alhamdulillah'
         else:
             l_process = switchonVpn(l_vpn, p_verbose=True)
+
+        # if failure to connect vpn --> next phantom
+        if l_process == None: continue
 
         if c.Test or l_process.poll() is None:
             print('l_phantomId :', g_phantomId)
