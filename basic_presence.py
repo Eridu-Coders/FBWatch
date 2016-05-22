@@ -312,14 +312,15 @@ def distributeLikes():
     l_cursor.execute(l_query)
 
     l_count = 0
+    l_tryCount = 0
     for l_idUser, l_userName, l_commId, l_commTxt in l_cursor:
         # only one in 3
         if random.randint(0, 2) == 0:
             if len(l_commTxt) > 50:
                 l_commTxt = l_commTxt[0:50] + '...'
 
-            print('{4:<3} [{0:<20}] {1:<30} --> [{2:<40}] {3}'.format(
-                l_idUser, l_userName, l_commId, l_commTxt, l_count))
+            print('{4:<3}/{5:<3} [{0:<20}] {1:<30} --> [{2:<40}] {3}'.format(
+                l_idUser, l_userName, l_commId, l_commTxt, l_count, l_tryCount))
 
             if likeOrComment(l_commId):
                 logOneLike(l_idUser, l_commId, g_phantomId)
@@ -328,6 +329,9 @@ def distributeLikes():
 
             l_count += 1
 
+        l_tryCount += 1
+
+    print('+++ Likes Distribution Complete +++')
     l_cursor.close()
 
 def distributeComments():
@@ -365,6 +369,7 @@ def distributeComments():
     l_cursor.execute(l_query)
 
     l_count = 0
+    l_tryCount = 0
     for l_idUser, l_userName, l_commId, l_commTxt in l_cursor:
         # only one in 5 is perfomed
         if random.randint(0, 4) == 0:
@@ -373,8 +378,8 @@ def distributeComments():
 
             l_commentNew = genComment()
 
-            print('{4:<3} [{0:<20}] {1:<30} --> [{2:<40}] {3} --> {5}'.format(
-                l_idUser, l_userName, l_commId, l_commTxt, l_count, l_commentNew))
+            print('{4:<3}/{6:<3} [{0:<20}] {1:<30} --> [{2:<40}] {3} --> {5}'.format(
+                l_idUser, l_userName, l_commId, l_commTxt, l_count, l_commentNew, l_tryCount))
 
             if likeOrComment(l_commId, l_commentNew):
                 logOneComment(l_idUser, l_commId, l_commentNew, g_phantomId)
@@ -383,6 +388,9 @@ def distributeComments():
 
             l_count += 1
 
+        l_tryCount += 1
+
+    print('*** Comments Distribution Complete ***')
     l_cursor.close()
 
 def distributeRivers(p_driver, p_phantom):
@@ -820,6 +828,7 @@ if __name__ == "__main__":
                 distributeLikes()
             distributeComments()
 
+            print('Closing browser')
             g_driver.quit()
 
         if c.Test:
@@ -827,7 +836,12 @@ if __name__ == "__main__":
             break
         elif l_process.poll() is None:
             # kill the VPN process (-15 = SIGTERM to allow child termination)
+            print('Stopping VPN')
             subprocess.Popen(['sudo', 'kill', '-15', str(l_process.pid)])
+            print('IP:', getOwnIp())
+        else:
+            print('Big problem!!')
+            sys.exit()
 
     l_cursor.close()
 
