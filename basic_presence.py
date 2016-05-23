@@ -144,28 +144,34 @@ def likeOrComment(p_idPost, p_message=''):
 
     # ufi_highlighted_comment
     try:
+        if g_verbose: print('Start waiting for ufi_highlighted_comment')
         l_commBlock = WebDriverWait(g_driver, 15).until(
             EC.presence_of_element_located((By.XPATH, '//div[@data-testid="ufi_highlighted_comment"]')))
 
+        if g_verbose: print('Found ufi_highlighted_comment')
         time.sleep(1)
         if len(p_message) == 0:
+            if g_verbose: print('Start waiting for UFILikeLink')
             l_likeLink = WebDriverWait(g_driver, 15).until(
                 EC.presence_of_element_located(
-                    (By.XPATH,
-                    '//div[@data-testid="ufi_highlighted_comment"]//a[@class="UFILikeLink"]')
+                        (By.XPATH,
+                        '//div[@data-testid="ufi_highlighted_comment"]//a[@class="UFILikeLink"]')
+                    )
                 )
-            )
 
+            if g_verbose: print('Found UFILikeLink')
             l_countLoop = 0
             l_retVal = True
-            while l_likeLink.text != 'Unlike' and l_likeLink.text != "Je n’aime plus":
+            while l_likeLink.text != 'Unlike' and l_likeLink.text != 'Je n’aime plus':
                 l_likeLink.click()
+                if g_verbose: print('UFILikeLink clicked')
                 time.sleep(.5)
                 l_likeLink = g_driver.find_element_by_xpath(
                     '//div[@data-testid="ufi_highlighted_comment"]//a[@class="UFILikeLink"]')
 
                 if l_countLoop > 10:
                     l_retVal = False
+                    if g_verbose: print('Broke loop because count > 10')
                     break
                 else:
                     l_countLoop += 1
@@ -174,13 +180,18 @@ def likeOrComment(p_idPost, p_message=''):
                 print('Liked {0} -->'.format(p_idPost), re.sub('\s+', ' ', l_commBlock.text).strip())
         else:
             # UFIAddCommentInput _1osb _5yk1
+            if g_verbose: print('Start waiting for ufi_reply_composer')
             l_commentZone = WebDriverWait(g_driver, 15).until(
                 EC.presence_of_element_located(
                     (By.XPATH,
                     '//div[@data-testid="ufi_reply_composer"]')
                 )
             )
+            if g_verbose: print('Found ufi_reply_composer')
+
+            time.sleep(.5)
             l_commentZone.send_keys(re.sub('\s+', ' ', p_message).strip() + '\n')
+            if g_verbose: print('Message sent')
 
             l_retVal = True
             if g_verbose:
@@ -188,25 +199,25 @@ def likeOrComment(p_idPost, p_message=''):
                 print('{0} -->'.format(p_idPost),
                       re.sub('\s+', ' ', l_commBlock.text).strip(),
                       '-->', p_message)
+
     except EX.TimeoutException:
-        print('Did not find highlighted comment block')
+        print('Did not find highlighted comment block or like link')
         l_retVal = False
     except EX.WebDriverException as e:
         print('Unknown WebDriverException -->', e)
         if len(p_message) == 0:
             l_likeLink = g_driver.find_element_by_xpath(
                 '//div[@data-testid="ufi_highlighted_comment"]//a[@class="UFILikeLink"]')
-            if l_likeLink.text == 'Unlike':
+            if l_likeLink.text == 'Unlike' or l_likeLink.text == 'Je n’aime plus':
                 l_retVal = True
             else: l_retVal = False
         else:
             l_retVal = False
 
-    if l_retVal:
-        g_browserActions += 1
+    g_browserActions += 1
 
-    # reopen a new browser every 50 actions
-    if g_browserActions % 50 == 0 and g_browserActions > 0:
+    # reopen a new browser every 20 actions
+    if g_browserActions % 20 == 0 and g_browserActions > 0:
         g_driver.close()
         g_driver = loginAs(g_phantomId, g_phantomPwd, p_api=False)
 
@@ -214,6 +225,7 @@ def likeOrComment(p_idPost, p_message=''):
     return l_retVal
 
 def logOneLike(p_userId, p_objId, p_phantom):
+    if g_verbose: print('Logging like:', p_userId, p_objId, p_phantom)
     l_cursor = g_connectorWrite.cursor()
 
     l_query = """
@@ -235,6 +247,7 @@ def logOneLike(p_userId, p_objId, p_phantom):
     l_cursor.close()
 
 def logOneComment(p_userId, p_objId, p_comm, p_phantom):
+    if g_verbose: print('Logging Comment:', p_userId, p_objId, p_phantom, p_comm)
     l_cursor = g_connectorWrite.cursor()
 
     l_query = """
@@ -319,7 +332,7 @@ def distributeLikes():
             if len(l_commTxt) > 50:
                 l_commTxt = l_commTxt[0:50] + '...'
 
-            print('{4:<3}/{5:<3} [{0:<20}] {1:<30} --> [{2:<40}] {3}'.format(
+            print('L <{4:<3}/{5:<3}> [{0:<20}] {1:<30} --> [{2:<40}] {3}'.format(
                 l_idUser, l_userName, l_commId, l_commTxt, l_count, l_tryCount))
 
             if likeOrComment(l_commId):
@@ -327,8 +340,10 @@ def distributeLikes():
             else:
                 logOneLike(l_idUser, l_commId, '<Dead>')
 
+            if g_verbose: print('Like done:', l_count)
             l_count += 1
 
+        if g_verbose: print('Next try:', l_tryCount)
         l_tryCount += 1
 
     print('+++ Likes Distribution Complete +++')
@@ -378,7 +393,7 @@ def distributeComments():
 
             l_commentNew = genComment()
 
-            print('{4:<3}/{6:<3} [{0:<20}] {1:<30} --> [{2:<40}] {3} --> {5}'.format(
+            print('K <{4:<3}/{6:<3}> [{0:<20}] {1:<30} --> [{2:<40}] {3} --> {5}'.format(
                 l_idUser, l_userName, l_commId, l_commTxt, l_count, l_commentNew, l_tryCount))
 
             if likeOrComment(l_commId, l_commentNew):
@@ -386,8 +401,10 @@ def distributeComments():
             else:
                 logOneComment(l_idUser, l_commId, '', '<Dead>')
 
+            if g_verbose: print('Comment done:', l_count)
             l_count += 1
 
+        if g_verbose: print('Next try:', l_tryCount)
         l_tryCount += 1
 
     print('*** Comments Distribution Complete ***')
