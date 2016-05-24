@@ -11,6 +11,11 @@ import re
 import argparse
 import os
 import subprocess
+import fcntl
+import locale
+import psutil
+import datetime
+import shutil
 
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
@@ -21,6 +26,10 @@ from login_as import loginAs
 from openvpn import switchonVpn, getOwnIp
 
 from collections import namedtuple
+
+# psutil installation:
+# sudo apt-get install python3-dev
+# sudo pip3 install psutil
 
 # to get access to a newly installed PostgreSQL server
 # http://www.postgresql.org/message-id/4D958A35.8030501@hogranch.com
@@ -49,6 +58,10 @@ G_LIMIT_COMM = 150                      # But only one in 5 will be actually com
 g_verbose = True
 
 G_DIRTY_FILE = '__Local_DB_is_dirty.txt'
+
+g_locChildPid = None
+g_ctpRead = None
+g_ptcWrite = None
 
 g_transChar = {
     'A': 'Z',
@@ -137,21 +150,181 @@ def randomWait(p_minDelay, p_maxDelay):
         print('Waiting for {0:.2f} seconds ...'.format(l_wait))
         time.sleep(l_wait)
 
+def makeNonBlocking(p_reader):
+    fd = p_reader.fileno()
+    fl = fcntl.fcntl(fd, fcntl.F_GETFL)
+    fcntl.fcntl(fd, fcntl.F_SETFL, fl | os.O_NONBLOCK)
+
 def likeOrComment(p_idPost, p_message=''):
+    global g_locChildPid
+    global g_driver
+
+    global g_ctpRead
+    global g_ptcWrite
+
+    if g_verbose: print('likeOrComment:', p_idPost, p_message)
+
+    if g_locChildPid == None:
+        # parent to child
+        l_ptcRead, g_ptcWrite = os.pipe()
+        l_ptcRead, g_ptcWrite = os.fdopen(l_ptcRead, 'r'), os.fdopen(g_ptcWrite, 'w')
+
+        # child to parent
+        g_ctpRead, l_ctpWrite = os.pipe()
+        g_ctpRead, l_ctpWrite = os.fdopen(g_ctpRead, 'r'), os.fdopen(l_ctpWrite, 'w')
+
+        makeNonBlocking(g_ctpRead)
+        #makeNonBlocking(l_ptcRead)
+
+        g_locChildPid = os.fork()
+        if g_locChildPid: # Parent
+            l_ctpWrite.close()
+            l_ptcRead.close()
+            print('Child PID:', g_locChildPid)
+        else: # Child
+            g_ctpRead.close()
+            g_ptcWrite.close()
+
+            # main child loop
+            while True:
+                l_cmd = l_ptcRead.readline().strip()
+                if g_verbose: print('parent sent: ' + l_cmd)
+
+                # end command --> close browser and terminate child
+                if l_cmd == 'END':
+                    if g_driver is not None:
+                        g_driver.close()
+                    sys.exit()
+
+                # execution of a like/comment command
+                l_extract = re.search('([^\s]+)\s(.*)', l_cmd)
+                if l_extract:
+                    l_id = l_extract.group(1)
+                    l_msg = l_extract.group(2)
+                    if g_verbose: print('l_id:', l_id)
+                    if g_verbose: print('l_msg:', l_msg)
+                    l_retVal = likeOrCommentExecute(l_id, l_msg)
+
+                    gobbleMem()
+
+                    if l_retVal:
+                        l_ctpWrite.write('FINISHED OK')
+                    else:
+                        l_ctpWrite.write('FINISHED NOK')
+                    l_ctpWrite.flush()
+
+    # here, we are necessarily in the parent because the child exits above
+    # and there is a child process running
+
+    # send the like/comment command
+    g_ptcWrite.write('{0} {1}\n'.format(p_idPost, p_message))
+    g_ptcWrite.flush()
+    l_memLogFile = 'mem_log.csv'
+    with open(l_memLogFile, 'w') as l_fLog:
+        l_fLog.write('"CHILD";"AVAILABLE"\n')
+        while 1:
+            l_data = g_ctpRead.readline().strip()
+            # good case: the child terminated properly and sent FINISHED
+            l_match = re.search('FINISHED\s+(OK|NOK)', l_data)
+            if l_match:
+                print('\nChild send end signal - stop monitoring:', l_match.group(1))
+                break
+
+            l_childMem = getMemUsage(g_locChildPid)
+            l_availableMem = psutil.virtual_memory().available
+            print('Mem : {0} child / {1} available'.format(
+                  locale.format('%.2f', l_childMem, grouping=True),
+                  locale.format('%d', l_availableMem, grouping=True)),
+                  end='\r')
+            l_fLog.write('{0};{1}\n'.format(l_childMem, l_availableMem))
+            l_fLog.flush()
+
+            # bad case: the child's memory went over 1Gb --> kill it
+            if l_childMem > 1024 ** 3 or l_availableMem < 1024 ** 3:
+                print('\nKilling Child process and firefox')
+                subprocess.Popen(['sudo', 'kill', '-9', str(g_locChildPid)])
+
+                for l_pid in getPid('firefox'):
+                    subprocess.Popen(['sudo', 'kill', '-9', str(l_pid)])
+
+                # close log file and save it
+                l_memLogFileSave = \
+                    re.sub('.csv', datetime.datetime.now().strftime('%Y-%m-%d_%H:%M:%S_%f') + '.csv', l_memLogFile)
+                shutil.copyfile(l_memLogFile, l_memLogFileSave)
+
+                # globals RAZ
+                g_ptcWrite = None
+                g_ctpRead = None
+                g_locChildPid = None
+
+                break
+
+            # loop 10 times / second
+            time.sleep(.1)
+
+    if g_verbose: print('likeOrComment Complete')
+
+def gobbleMem():
+    t = []
+    while True:
+        for i in range(10000000):
+            t += ['toto']
+        time.sleep(.1)
+
+def getPid(p_name):
+    return map(int, subprocess.check_output(["pidof", p_name]).split())
+
+def childEnd():
+    global g_ptcWrite
+    global g_ctpRead
+    global g_locChildPid
+
+    if g_ptcWrite is not None:
+        g_ptcWrite.write('END\n')
+        g_ptcWrite.flush()
+
+        # globals RAZ
+        g_ptcWrite = None
+        g_locChildPid = None
+        g_ctpRead = None
+
+def getMemUsage(p_pid):
+    l_scale = {'kB': 1024.0, 'mB': 1024.0 * 1024.0, 'KB': 1024.0, 'MB': 1024.0 * 1024.0}
+
+    with open('/proc/{0}/status'.format(p_pid), 'r') as f:
+        l_match = re.search('VmSize:\s+(\d+)\s+(\w\w)\n', f.read())
+        if l_match:
+            return float(l_match.group(1)) * l_scale[l_match.group(2)]
+
+    return 0.0
+
+def likeOrCommentExecute(p_idPost, p_message=''):
     global g_browserActions
     global g_driver
-    g_driver.get('http://www.facebook.com/{0}'.format(p_idPost))
+
+    # opens browser driver and reopen a new one every 20 actions
+    if g_driver is None or g_browserActions % 20 == 0:
+        # close driver if open
+        if g_driver is not None: g_driver.close()
+
+        if g_verbose: print('Opening Selenium Firefox driver and log in')
+        # open a new driver
+        g_driver = loginAs(g_phantomId, g_phantomPwd, p_api=False)
+
+    l_url = 'http://www.facebook.com/{0}'.format(p_idPost)
+    print('\nget:', l_url)
+    g_driver.get(l_url)
 
     # ufi_highlighted_comment
     try:
-        if g_verbose: print('Start waiting for ufi_highlighted_comment')
+        if g_verbose: print('\nStart waiting for ufi_highlighted_comment')
         l_commBlock = WebDriverWait(g_driver, 15).until(
             EC.presence_of_element_located((By.XPATH, '//div[@data-testid="ufi_highlighted_comment"]')))
 
-        if g_verbose: print('Found ufi_highlighted_comment')
+        if g_verbose: print('\nFound ufi_highlighted_comment')
         time.sleep(1)
         if len(p_message) == 0:
-            if g_verbose: print('Start waiting for UFILikeLink')
+            if g_verbose: print('\nStart waiting for UFILikeLink')
             l_likeLink = WebDriverWait(g_driver, 15).until(
                 EC.presence_of_element_located(
                         (By.XPATH,
@@ -159,52 +332,52 @@ def likeOrComment(p_idPost, p_message=''):
                     )
                 )
 
-            if g_verbose: print('Found UFILikeLink')
+            if g_verbose: print('\nFound UFILikeLink')
             l_countLoop = 0
             l_retVal = True
             while l_likeLink.text != 'Unlike' and l_likeLink.text != 'Je n’aime plus':
                 l_likeLink.click()
-                if g_verbose: print('UFILikeLink clicked')
+                if g_verbose: print('\nUFILikeLink clicked')
                 time.sleep(.5)
                 l_likeLink = g_driver.find_element_by_xpath(
                     '//div[@data-testid="ufi_highlighted_comment"]//a[@class="UFILikeLink"]')
 
                 if l_countLoop > 10:
                     l_retVal = False
-                    if g_verbose: print('Broke loop because count > 10')
+                    if g_verbose: print('\nBroke loop because count > 10')
                     break
                 else:
                     l_countLoop += 1
 
             if g_verbose:
-                print('Liked {0} -->'.format(p_idPost), re.sub('\s+', ' ', l_commBlock.text).strip())
+                print('\nLiked {0} -->'.format(p_idPost), re.sub('\s+', ' ', l_commBlock.text).strip())
         else:
             # UFIAddCommentInput _1osb _5yk1
-            if g_verbose: print('Start waiting for ufi_reply_composer')
+            if g_verbose: print('\nStart waiting for ufi_reply_composer')
             l_commentZone = WebDriverWait(g_driver, 15).until(
                 EC.presence_of_element_located(
                     (By.XPATH,
                     '//div[@data-testid="ufi_reply_composer"]')
                 )
             )
-            if g_verbose: print('Found ufi_reply_composer')
+            if g_verbose: print('\nFound ufi_reply_composer')
 
             time.sleep(.5)
             l_commentZone.send_keys(re.sub('\s+', ' ', p_message).strip() + '\n')
-            if g_verbose: print('Message sent')
+            if g_verbose: print('\nMessage sent')
 
             l_retVal = True
             if g_verbose:
                 l_commBlock = g_driver.find_element_by_xpath('//div[@data-testid="ufi_highlighted_comment"]')
-                print('{0} -->'.format(p_idPost),
+                print('\n{0} -->'.format(p_idPost),
                       re.sub('\s+', ' ', l_commBlock.text).strip(),
                       '-->', p_message)
 
     except EX.TimeoutException:
-        print('Did not find highlighted comment block or like link')
+        print('\nDid not find highlighted comment block or like link')
         l_retVal = False
     except EX.WebDriverException as e:
-        print('Unknown WebDriverException -->', e)
+        print('\nUnknown WebDriverException -->', e)
         if len(p_message) == 0:
             l_likeLink = g_driver.find_element_by_xpath(
                 '//div[@data-testid="ufi_highlighted_comment"]//a[@class="UFILikeLink"]')
@@ -215,11 +388,6 @@ def likeOrComment(p_idPost, p_message=''):
             l_retVal = False
 
     g_browserActions += 1
-
-    # reopen a new browser every 20 actions
-    if g_browserActions % 20 == 0 and g_browserActions > 0:
-        g_driver.close()
-        g_driver = loginAs(g_phantomId, g_phantomPwd, p_api=False)
 
     randomWait(G_WAIT_FB_MIN, G_WAIT_FB_MAX)
     return l_retVal
@@ -717,32 +885,39 @@ if __name__ == "__main__":
     print('|                                                            |')
     print('| Basic facebook presence                                    |')
     print('|                                                            |')
-    print('| v. 2.5 - 19/05/2016                                        |')
+    print('| v. 2.6 - 24/05/2016                                        |')
     print('+------------------------------------------------------------+')
 
     random.seed()
 
+    locale.setlocale(locale.LC_ALL, '')
+    print('Locale: {0}'.format(locale.getlocale()))
+
     l_parser = argparse.ArgumentParser(description='Download FB data.')
-    l_parser.add_argument('--NoLikes', help='Do not perform likes distribution', action='store_true')
-    l_parser.add_argument('-q', help='Quiet: less progress info', action='store_true')
-    l_parser.add_argument('--CleanLocal', help='Only cleans up local DB', action='store_true')
-    l_parser.add_argument('-Test', help='No VPN and only KA as user', action='store_true')
-    l_parser.add_argument('-gc', help='Test gen comment', action='store_true')
-    l_parser.add_argument('--SshTest', help='Test remote command execution', action='store_true')
-    l_parser.add_argument('--NoCache', help='Do not update local DB cache', action='store_true')
     l_parser.add_argument('-l', help='List phantoms and login as one', action='store_true')
+    l_parser.add_argument('-q', help='Quiet: less progress info', action='store_true')
+    l_parser.add_argument('--NoLikes', help='Do not perform likes distribution', action='store_true')
+    l_parser.add_argument('--NoComments', help='Do not perform comments distribution', action='store_true')
+    l_parser.add_argument('--NoCache', help='Do not update local DB cache', action='store_true')
+    l_parser.add_argument('--CleanLocal', help='Only cleans up local DB', action='store_true')
+    l_parser.add_argument('--Test', help='No VPN and only KA as user', action='store_true')
+    l_parser.add_argument('--GenComment', help='Test gen comment', action='store_true')
+    l_parser.add_argument('--SshTest', help='Test remote command execution', action='store_true')
+    l_parser.add_argument('--LOCTest', help='Test likeOrComment', action='store_true')
 
     # dummy class to receive the parsed args
     class C:
         def __init__(self):
             self.l = False
             self.q = False
-            self.gc = False
+            self.GenComment = False
             self.NoLikes = False
             self.CleanLocal = False
             self.Test = False
             self.SshTest = False
             self.NoCache = False
+            self.NoComments = False
+            self.LOCTest = False
 
     # do the argument parse
     c = C()
@@ -756,9 +931,17 @@ if __name__ == "__main__":
     if c.q:
         g_verbose = False
 
-    if c.gc:
+    if c.GenComment:
         for i in range(1000):
             print(i, genComment())
+        sys.exit()
+
+    if c.LOCTest:
+        g_phantomId = 'kabir.eridu@gmail.com'
+        g_phantomPwd = '12Alhamdulillah'
+        likeOrComment('10154315425328690_10154326253248690', 'Well ?')
+        likeOrComment('10154315425328690_10154326253248690', 'Are you really sure ?')
+        childEnd()
         sys.exit()
 
     if c.SshTest:
@@ -839,14 +1022,18 @@ if __name__ == "__main__":
         if c.Test or l_process.poll() is None:
             print('l_phantomId :', g_phantomId)
             print('l_phantomPwd:', g_phantomPwd)
-            g_driver = loginAs(g_phantomId, g_phantomPwd, p_api=False)
+
+            # no longer necessary because handled inside likeOrComment()
+            # g_driver = loginAs(g_phantomId, g_phantomPwd, p_api=False)
 
             if not c.NoLikes:
                 distributeLikes()
-            distributeComments()
 
-            print('Closing browser')
-            g_driver.quit()
+            if not c.NoComments:
+                distributeComments()
+
+            # sends signal to child process to end
+            childEnd()
 
         if c.Test:
             # only one user if in test mode --> no need to loop
