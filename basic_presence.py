@@ -16,6 +16,10 @@ import locale
 import psutil
 import datetime
 import shutil
+import gc
+import objgraph
+
+from pympler import summary, muppy
 
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
@@ -164,6 +168,8 @@ def likeOrComment(p_idPost, p_message=''):
 
     if g_verbose: print('likeOrComment:', p_idPost, p_message)
 
+    l_myMem = getMemUsage(os.getpid())
+
     if g_locChildPid == None:
         # parent to child
         l_ptcRead, g_ptcWrite = os.pipe()
@@ -197,15 +203,16 @@ def likeOrComment(p_idPost, p_message=''):
                     sys.exit()
 
                 # execution of a like/comment command
-                l_extract = re.search('([^\s]+)\s(.*)', l_cmd)
+                l_extract = re.search('([^§]+)§(.*)', l_cmd)
                 if l_extract:
                     l_id = l_extract.group(1)
                     l_msg = l_extract.group(2)
                     if g_verbose: print('l_id:', l_id)
                     if g_verbose: print('l_msg:', l_msg)
+
                     l_retVal = likeOrCommentExecute(l_id, l_msg)
 
-                    gobbleMem()
+                    #gobbleMem()
 
                     if l_retVal:
                         l_ctpWrite.write('FINISHED OK')
@@ -215,29 +222,47 @@ def likeOrComment(p_idPost, p_message=''):
 
     # here, we are necessarily in the parent because the child exits above
     # and there is a child process running
+    l_myMem2 = getMemUsage(os.getpid())
 
     # send the like/comment command
-    g_ptcWrite.write('{0} {1}\n'.format(p_idPost, p_message))
+    g_ptcWrite.write('{0}§{1}\n'.format(p_idPost, p_message))
     g_ptcWrite.flush()
     l_memLogFile = 'mem_log.csv'
+    l_retVal = False
     with open(l_memLogFile, 'w') as l_fLog:
-        l_fLog.write('"CHILD";"AVAILABLE"\n')
+        l_fLog.write('"CHILD";"AVAILABLE";"MYSELF"\n')
         while 1:
             l_data = g_ctpRead.readline().strip()
             # good case: the child terminated properly and sent FINISHED
             l_match = re.search('FINISHED\s+(OK|NOK)', l_data)
             if l_match:
-                print('\nChild send end signal - stop monitoring:', l_match.group(1))
+                l_retCode = l_match.group(1)
+                print('\nChild send end signal - stop monitoring:', l_retCode)
+                l_retVal = (l_retCode == 'OK')
                 break
 
             l_childMem = getMemUsage(g_locChildPid)
             l_availableMem = psutil.virtual_memory().available
-            print('Mem : {0} child / {1} available'.format(
-                  locale.format('%.2f', l_childMem, grouping=True),
-                  locale.format('%d', l_availableMem, grouping=True)),
+            l_myMem = getMemUsage(os.getpid())
+            print('Mem : {0} child / {1} available / {2} myself'.format(
+                  locale.format('%d', int(l_childMem), grouping=True),
+                  locale.format('%d', l_availableMem, grouping=True),
+                  locale.format('%d', int(l_myMem), grouping=True)),
                   end='\r')
-            l_fLog.write('{0};{1}\n'.format(l_childMem, l_availableMem))
+            l_fLog.write('{0};{1};{2}\n'.format(l_childMem, l_availableMem, l_myMem))
             l_fLog.flush()
+
+            # grrrrr
+            if l_myMem > 500 * (1024 ** 2):
+                print('\nOh my God, I am fat!')
+                l_myMem3 = getMemUsage(os.getpid())
+                if g_verbose: print('Mem increase child setup      :',
+                                    locale.format('%d', int(l_myMem2 - l_myMem), grouping=True))
+                if g_verbose: print('Mem increase child monitoring :',
+                                    locale.format('%d', int(l_myMem3 - l_myMem2), grouping=True))
+                l_quit = input('Finished? ')
+                childEnd()
+                sys.exit()
 
             # bad case: the child's memory went over 1Gb --> kill it
             if l_childMem > 1024 ** 3 or l_availableMem < 1024 ** 3:
@@ -262,7 +287,22 @@ def likeOrComment(p_idPost, p_message=''):
             # loop 10 times / second
             time.sleep(.1)
 
+    l_myMem3 = getMemUsage(os.getpid())
+
+    randomWait(G_WAIT_FB_MIN, G_WAIT_FB_MAX)
+
+    l_myMem4 = getMemUsage(os.getpid())
+
+    if g_verbose: print('Mem increase child setup      :',
+                        locale.format('%d', int(l_myMem2 - l_myMem), grouping=True))
+    if g_verbose: print('Mem increase child monitoring :',
+                        locale.format('%d', int(l_myMem3 - l_myMem2), grouping=True))
+    if g_verbose: print('Mem increase waiting          :',
+                        locale.format('%d', int(l_myMem4 - l_myMem3), grouping=True))
+
     if g_verbose: print('likeOrComment Complete')
+
+    return l_retVal
 
 def gobbleMem():
     t = []
@@ -272,7 +312,14 @@ def gobbleMem():
         time.sleep(.1)
 
 def getPid(p_name):
-    return map(int, subprocess.check_output(["pidof", p_name]).split())
+    try:
+        l_rawPidof = subprocess.check_output(["pidof", p_name])
+    except subprocess.CalledProcessError as e:
+        print('WARNING - pidof return error code:', e.returncode)
+        print('pidof output:', e.output)
+        return []
+
+    return map(int, l_rawPidof.split())
 
 def childEnd():
     global g_ptcWrite
@@ -389,7 +436,6 @@ def likeOrCommentExecute(p_idPost, p_message=''):
 
     g_browserActions += 1
 
-    randomWait(G_WAIT_FB_MIN, G_WAIT_FB_MAX)
     return l_retVal
 
 def logOneLike(p_userId, p_objId, p_phantom):
@@ -457,7 +503,6 @@ def logOneRiver(p_idPage, p_idPost, p_link, p_phantom):
 
     l_cursor.close()
 
-
 def distributeLikes():
     print('+++ Likes Distribution +++')
     l_cursor = g_connectorRead.cursor()
@@ -492,30 +537,40 @@ def distributeLikes():
 
     l_cursor.execute(l_query)
 
-    l_count = 0
-    l_tryCount = 0
+    l_listLikes = []
     for l_idUser, l_userName, l_commId, l_commTxt in l_cursor:
         # only one in 3
         if random.randint(0, 2) == 0:
-            if len(l_commTxt) > 50:
-                l_commTxt = l_commTxt[0:50] + '...'
+            l_listLikes += [(l_idUser, l_userName, l_commId, l_commTxt)]
 
-            print('L <{4:<3}/{5:<3}> [{0:<20}] {1:<30} --> [{2:<40}] {3}'.format(
-                l_idUser, l_userName, l_commId, l_commTxt, l_count, l_tryCount))
+    l_cursor.close()
 
-            if likeOrComment(l_commId):
-                logOneLike(l_idUser, l_commId, g_phantomId)
-            else:
-                logOneLike(l_idUser, l_commId, '<Dead>')
+    l_count = 0
+    for l_idUser, l_userName, l_commId, l_commTxt in l_listLikes:
+        if len(l_commTxt) > 50:
+            l_commTxt = l_commTxt[0:50] + '...'
 
-            if g_verbose: print('Like done:', l_count)
-            l_count += 1
+        print('L <{4:<3}/{5:<3}> [{0:<20}] {1:<30} --> [{2:<40}] {3}'.format(
+            l_idUser, l_userName, l_commId, l_commTxt, l_count, len(l_listLikes)))
 
-        if g_verbose: print('Next try:', l_tryCount)
-        l_tryCount += 1
+        l_myMem = getMemUsage(os.getpid())
+        if likeOrComment(l_commId):
+            l_myMem2 = getMemUsage(os.getpid())
+            logOneLike(l_idUser, l_commId, g_phantomId)
+        else:
+            l_myMem2 = getMemUsage(os.getpid())
+            logOneLike(l_idUser, l_commId, '<Dead>')
+        l_myMem3 = getMemUsage(os.getpid())
+
+        if g_verbose: print('Mem increase likeOrComment:',
+                            locale.format('%d', int(l_myMem2 - l_myMem), grouping=True))
+        if g_verbose: print('Mem increase logOneLike   :',
+                            locale.format('%d', int(l_myMem3 - l_myMem2), grouping=True))
+
+        if g_verbose: print('Like done:', l_count)
+        l_count += 1
 
     print('+++ Likes Distribution Complete +++')
-    l_cursor.close()
 
 def distributeComments():
     print('*** Comments Distribution ***')
@@ -551,32 +606,42 @@ def distributeComments():
 
     l_cursor.execute(l_query)
 
-    l_count = 0
-    l_tryCount = 0
+    l_listComm = []
     for l_idUser, l_userName, l_commId, l_commTxt in l_cursor:
         # only one in 5 is perfomed
         if random.randint(0, 4) == 0:
-            if len(l_commTxt) > 50:
-                l_commTxt = l_commTxt[0:50] + '...'
+            l_listComm += [(l_idUser, l_userName, l_commId, l_commTxt)]
 
-            l_commentNew = genComment()
+    l_cursor.close()
 
-            print('K <{4:<3}/{6:<3}> [{0:<20}] {1:<30} --> [{2:<40}] {3} --> {5}'.format(
-                l_idUser, l_userName, l_commId, l_commTxt, l_count, l_commentNew, l_tryCount))
+    l_count = 0
+    for l_idUser, l_userName, l_commId, l_commTxt in l_listComm:
+        if len(l_commTxt) > 50:
+            l_commTxt = l_commTxt[0:50] + '...'
 
-            if likeOrComment(l_commId, l_commentNew):
-                logOneComment(l_idUser, l_commId, l_commentNew, g_phantomId)
-            else:
-                logOneComment(l_idUser, l_commId, '', '<Dead>')
+        l_commentNew = genComment()
 
-            if g_verbose: print('Comment done:', l_count)
-            l_count += 1
+        print('K <{4:<3}/{6:<3}> [{0:<20}] {1:<30} --> [{2:<40}] {3} --> {5}'.format(
+            l_idUser, l_userName, l_commId, l_commTxt, l_count, l_commentNew, len(l_listComm)))
 
-        if g_verbose: print('Next try:', l_tryCount)
-        l_tryCount += 1
+        l_myMem = getMemUsage(os.getpid())
+        if likeOrComment(l_commId, l_commentNew):
+            l_myMem2 = getMemUsage(os.getpid())
+            logOneComment(l_idUser, l_commId, l_commentNew, g_phantomId)
+        else:
+            l_myMem2 = getMemUsage(os.getpid())
+            logOneComment(l_idUser, l_commId, '', '<Dead>')
+        l_myMem3 = getMemUsage(os.getpid())
+
+        if g_verbose: print('Mem increase likeOrComment:',
+                            locale.format('%d', int(l_myMem2 - l_myMem), grouping=True))
+        if g_verbose: print('Mem increase logOneComment:',
+                            locale.format('%d', int(l_myMem3 - l_myMem2), grouping=True))
+
+        if g_verbose: print('Comment done:', l_count)
+        l_count += 1
 
     print('*** Comments Distribution Complete ***')
-    l_cursor.close()
 
 def distributeRivers(p_driver, p_phantom):
     print('*** Rivers Collective Image Distribution ***')
@@ -647,28 +712,38 @@ def genRiversLink():
 
     return l_link
 
+
+g_commList = [
+    'Indeed', 'Ok', 'That sounds right', 'I agree', '100% agree',
+    'Quite right', 'Absolutely right', 'Hell yes', 'Right on the mark', 'Yes indeed',
+    'Yes', 'True', 'So true', 'Yeah', 'Hell Yeah', 'Fuck Yeah', 'Thumbs up man',
+    "Can't say anything against that", "Couldn't agree more",
+    'There is no denying it', 'The Truth always comes out',
+    "Couldn't have said it better myself", 'You are right', 'You are so right',
+    'Damn right', 'Spot on', 'You are damn right', 'Sure enough']
+
+g_choiceCommList = None
+
 def genComment():
-    l_commList = [
-        'Indeed', 'Ok', 'That sounds right', 'I agree', '100% agree',
-        'Quite right', 'Absolutely right', 'Hell yes', 'Right on the mark', 'Yes indeed',
-        'Yes', 'True', 'So true', 'Yeah', 'Hell Yeah', 'Fuck Yeah', 'Thumbs up man',
-        "Can't say anything against that", "Couldn't agree more",
-        'There is no denying it', 'The Truth always comes out',
-        "Couldn't have said it better myself", 'You are right', 'You are so right',
-        'Damn right', 'Spot on', 'You are damn right', 'Sure enough']
-    l_commPunct = \
-        [c + '.' for c in l_commList] + \
-        [c + '!' for c in l_commList] + \
-        [c + '!!' for c in l_commList]
+    global g_commList
+    global g_choiceCommList
 
-    l_compoList = []
-    for i in range(len(l_commPunct)):
-        for j in range(len(l_commPunct)):
-            if i != j:
-                l_compoList += [l_commPunct[i] + ' ' + l_commPunct[j]]
+    if g_choiceCommList is None:
+        l_commPunct = \
+            [c + '.' for c in g_commList] + \
+            [c + '!' for c in g_commList] + \
+            [c + '!!' for c in g_commList]
 
-    l_commentNew = random.choice(l_compoList +
-                                 l_commList + [c + '!' for c in l_commList] + [c + '!!' for c in l_commList])
+        l_compoList = []
+        for i in range(len(l_commPunct)):
+            for j in range(len(l_commPunct)):
+                if i != j:
+                    l_compoList += [l_commPunct[i] + ' ' + l_commPunct[j]]
+
+        g_choiceCommList = l_compoList + \
+                           g_commList + [c + '!' for c in g_commList] + [c + '!!' for c in g_commList]
+
+    l_commentNew = random.choice(g_choiceCommList)
 
     if random.randint(0, 19) == 10:
         l_index = random.randint(0, len(l_commentNew)-1)
@@ -855,7 +930,7 @@ def choosePhantom():
             continue
 
         if l_choiceNum < 0 or l_choiceNum >= len(l_phantomList):
-            print('Must be between 0and {0}'.format(len(l_phantomList)))
+            print('Must be between 0 and {0}'.format(len(l_phantomList)))
         else:
             l_finished = True
 
@@ -1003,9 +1078,23 @@ if __name__ == "__main__":
     """
 
     # No exception catching here to allow full stack trace printout
+
+    l_phantomList = []
+    RecPhantom = namedtuple('RecPhantom', 'PhantomId PhantomPwd PhantomVpn FbUserId')
     l_cursor.execute(l_query)
 
     for l_phantomId, l_phantomPwd, l_vpn, l_fbId in l_cursor:
+        l_phantomId = l_phantomId.strip()
+        l_phantomPwd = l_phantomPwd.strip()
+
+        l_phantomList += [RecPhantom(l_phantomId, l_phantomPwd, l_vpn, l_fbId)]
+
+    l_cursor.close()
+
+    g_connectorRead.close()
+    g_connectorWrite.close()
+
+    for l_phantomId, l_phantomPwd, l_vpn, l_fbId in l_phantomList:
         g_phantomId = l_phantomId.strip()
         g_phantomPwd = l_phantomPwd.strip()
 
@@ -1020,11 +1109,23 @@ if __name__ == "__main__":
         if l_process == None: continue
 
         if c.Test or l_process.poll() is None:
-            print('l_phantomId :', g_phantomId)
-            print('l_phantomPwd:', g_phantomPwd)
+            print('g_phantomId :', g_phantomId)
+            print('g_phantomPwd:', g_phantomPwd)
 
             # no longer necessary because handled inside likeOrComment()
             # g_driver = loginAs(g_phantomId, g_phantomPwd, p_api=False)
+
+            # separate connection for each phantom to avoid any possible interference from vpn
+            g_connectorRead = psycopg2.connect(
+                host='localhost',
+                database="FBWatch",
+                user="postgres",
+                password="murugan!")
+            g_connectorWrite = psycopg2.connect(
+                host='localhost',
+                database="FBWatch",
+                user="postgres",
+                password="murugan!")
 
             if not c.NoLikes:
                 distributeLikes()
@@ -1032,7 +1133,10 @@ if __name__ == "__main__":
             if not c.NoComments:
                 distributeComments()
 
-            # sends signal to child process to end
+            g_connectorRead.close()
+            g_connectorWrite.close()
+
+            # sends signal to child process to end (also closes current firefox Selenium driver in the child)
             childEnd()
 
         if c.Test:
@@ -1046,11 +1150,6 @@ if __name__ == "__main__":
         else:
             print('Big problem!!')
             sys.exit()
-
-    l_cursor.close()
-
-    g_connectorRead.close()
-    g_connectorWrite.close()
 
     # update main DB with results
     if not c.Test:
