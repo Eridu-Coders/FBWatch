@@ -16,10 +16,8 @@ import locale
 import psutil
 import datetime
 import shutil
-import gc
-import objgraph
-
-from pympler import summary, muppy
+import csv
+import glob
 
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
@@ -41,32 +39,6 @@ from collections import namedtuple
 
 # postgres=> alter user postgres password 'apassword';
 # ---------------------------------------------------- Globals ---------------------------------------------------------
-# globals for the Phantom ID and password + the Selenium browser driver
-# These are necessary to allow periodic refresh of the driver in likeOrComment()
-g_phantomId = None
-g_phantomPwd = None
-g_driver = None
-
-g_browserActions = 0
-
-G_WAIT_FB_MIN = 30
-G_WAIT_FB_MAX = G_WAIT_FB_MIN + 60
-
-g_connectorRead = None
-g_connectorWrite = None
-
-# number of rows kept by the likes and comment distribution main queries
-G_LIMIT_LIKES = 180                     # But only one in 3 will be actually liked
-G_LIMIT_COMM = 150                      # But only one in 5 will be actually commented
-
-g_verbose = True
-
-G_DIRTY_FILE = '__Local_DB_is_dirty.txt'
-
-g_locChildPid = None
-g_ctpRead = None
-g_ptcWrite = None
-
 g_transChar = {
     'A': 'Z',
     'Z': 'E',
@@ -129,23 +101,85 @@ g_transChar = {
     ' ': ' '
 }
 
+# globals for the Phantom ID and password + the Selenium browser driver
+# These are necessary to allow periodic refresh of the driver in likeOrComment()
+g_phantomId = None
+g_phantomPwd = None
+g_browserDriver = None
+
+g_browserActions = 0
+
+G_WAIT_FB_MIN = 20
+G_WAIT_FB_MAX = G_WAIT_FB_MIN + 40
+
+g_connectorRead = None
+g_connectorWrite = None
+
+# number of rows kept by the likes and comment distribution main queries
+G_LIMIT_LIKES = 180                     # But only one in 3 will be actually liked
+G_LIMIT_COMM = 150                      # But only one in 5 will be actually commented
+
+g_verbose = True
+
+g_monitorPid = None
+
 # ---------------------------------------------------- Functions -------------------------------------------------------
+def launchMemoryMonitor():
+    global g_monitorPid
+    print('Launching Memory Monitor')
+
+    g_monitorPid = os.fork()
+    if g_monitorPid:  # Parent
+        print('Monitor PID:', g_monitorPid)
+    else:  # Child
+        l_measurementsPerSec = 10
+        while True:
+            l_csvMonitor = 'mem_monitor.csv'
+            with open(l_csvMonitor, 'w') as l_fMonitor:
+                l_fMonitor.write('"PID";"DATE";"MEM"\n')
+
+                # 5 min monitoring spans
+                for i in range(5 * 60 * l_measurementsPerSec):
+                    l_pidCount = 0
+                    for l_pid in getPid('basic_presence.py'):
+                        l_pidCount += 1
+                        l_mem = getMemUsage(l_pid)
+                        l_fMonitor.write('"{0}";"{1}";{2}\n'.format(
+                            l_pid,
+                            datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f'),
+                            int(l_mem)
+                        ))
+                        l_fMonitor.flush()
+
+                        # kill all pids if any grows to more than 400 Mb big
+                        # or total available mem goes below 1 Gb
+                        if l_mem > 400 * (1024 ** 2) or psutil.virtual_memory().available < 1024 ** 3:
+                            for l_pid in getPid('basic_presence.py'):
+                                if l_pid != os.getpid():
+                                    subprocess.Popen(['sudo', 'kill', '-9', str(l_pid)])
+                                    l_fMonitor.write('"{0}";"{1}";{2}\n'.format(
+                                        l_pid,
+                                        datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f'),
+                                        -1
+                                    ))
+                                sys.exit()
+
+                    # if the monitoring job is alone --> no point staying there
+                    if l_pidCount < 2:
+                        sys.exit()
+
+                    # 10 measurements per second
+                    time.sleep(1.0 / l_measurementsPerSec)
+
+                l_fMonitor.close()
+                # depth of retention = 1 ---> between 5 and 10 minutes data
+                shutil.copyfile(l_csvMonitor, re.sub(r'\.csv', '_0.csv', l_csvMonitor))
+
 def cleanForInsert(s):
     r = re.sub("'", "''", s)
     # r = re.sub(r'\\', r'\\\\', r)
 
     return r
-
-def markLocalDBasDirty():
-    with open(G_DIRTY_FILE, 'w') as f:
-        f.write('Hello')
-        f.close()
-
-def isLocalDBDirty():
-    return os.path.isfile(G_DIRTY_FILE)
-
-def markLocalDBasClean():
-    os.remove(G_DIRTY_FILE)
 
 # wait random time between given bounds
 def randomWait(p_minDelay, p_maxDelay):
@@ -159,151 +193,6 @@ def makeNonBlocking(p_reader):
     fl = fcntl.fcntl(fd, fcntl.F_GETFL)
     fcntl.fcntl(fd, fcntl.F_SETFL, fl | os.O_NONBLOCK)
 
-def likeOrComment(p_idPost, p_message=''):
-    global g_locChildPid
-    global g_driver
-
-    global g_ctpRead
-    global g_ptcWrite
-
-    if g_verbose: print('likeOrComment:', p_idPost, p_message)
-
-    l_myMem = getMemUsage(os.getpid())
-
-    if g_locChildPid == None:
-        # parent to child
-        l_ptcRead, g_ptcWrite = os.pipe()
-        l_ptcRead, g_ptcWrite = os.fdopen(l_ptcRead, 'r'), os.fdopen(g_ptcWrite, 'w')
-
-        # child to parent
-        g_ctpRead, l_ctpWrite = os.pipe()
-        g_ctpRead, l_ctpWrite = os.fdopen(g_ctpRead, 'r'), os.fdopen(l_ctpWrite, 'w')
-
-        makeNonBlocking(g_ctpRead)
-        #makeNonBlocking(l_ptcRead)
-
-        g_locChildPid = os.fork()
-        if g_locChildPid: # Parent
-            l_ctpWrite.close()
-            l_ptcRead.close()
-            print('Child PID:', g_locChildPid)
-        else: # Child
-            g_ctpRead.close()
-            g_ptcWrite.close()
-
-            # main child loop
-            while True:
-                l_cmd = l_ptcRead.readline().strip()
-                if g_verbose: print('parent sent: ' + l_cmd)
-
-                # end command --> close browser and terminate child
-                if l_cmd == 'END':
-                    if g_driver is not None:
-                        g_driver.close()
-                    sys.exit()
-
-                # execution of a like/comment command
-                l_extract = re.search('([^§]+)§(.*)', l_cmd)
-                if l_extract:
-                    l_id = l_extract.group(1)
-                    l_msg = l_extract.group(2)
-                    if g_verbose: print('l_id:', l_id)
-                    if g_verbose: print('l_msg:', l_msg)
-
-                    l_retVal = likeOrCommentExecute(l_id, l_msg)
-
-                    #gobbleMem()
-
-                    if l_retVal:
-                        l_ctpWrite.write('FINISHED OK')
-                    else:
-                        l_ctpWrite.write('FINISHED NOK')
-                    l_ctpWrite.flush()
-
-    # here, we are necessarily in the parent because the child exits above
-    # and there is a child process running
-    l_myMem2 = getMemUsage(os.getpid())
-
-    # send the like/comment command
-    g_ptcWrite.write('{0}§{1}\n'.format(p_idPost, p_message))
-    g_ptcWrite.flush()
-    l_memLogFile = 'mem_log.csv'
-    l_retVal = False
-    with open(l_memLogFile, 'w') as l_fLog:
-        l_fLog.write('"CHILD";"AVAILABLE";"MYSELF"\n')
-        while 1:
-            l_data = g_ctpRead.readline().strip()
-            # good case: the child terminated properly and sent FINISHED
-            l_match = re.search('FINISHED\s+(OK|NOK)', l_data)
-            if l_match:
-                l_retCode = l_match.group(1)
-                print('\nChild send end signal - stop monitoring:', l_retCode)
-                l_retVal = (l_retCode == 'OK')
-                break
-
-            l_childMem = getMemUsage(g_locChildPid)
-            l_availableMem = psutil.virtual_memory().available
-            l_myMem = getMemUsage(os.getpid())
-            print('Mem : {0} child / {1} available / {2} myself'.format(
-                  locale.format('%d', int(l_childMem), grouping=True),
-                  locale.format('%d', l_availableMem, grouping=True),
-                  locale.format('%d', int(l_myMem), grouping=True)),
-                  end='\r')
-            l_fLog.write('{0};{1};{2}\n'.format(l_childMem, l_availableMem, l_myMem))
-            l_fLog.flush()
-
-            # grrrrr
-            if l_myMem > 500 * (1024 ** 2):
-                print('\nOh my God, I am fat!')
-                l_myMem3 = getMemUsage(os.getpid())
-                if g_verbose: print('Mem increase child setup      :',
-                                    locale.format('%d', int(l_myMem2 - l_myMem), grouping=True))
-                if g_verbose: print('Mem increase child monitoring :',
-                                    locale.format('%d', int(l_myMem3 - l_myMem2), grouping=True))
-                l_quit = input('Finished? ')
-                childEnd()
-                sys.exit()
-
-            # bad case: the child's memory went over 1Gb --> kill it
-            if l_childMem > 1024 ** 3 or l_availableMem < 1024 ** 3:
-                print('\nKilling Child process and firefox')
-                subprocess.Popen(['sudo', 'kill', '-9', str(g_locChildPid)])
-
-                for l_pid in getPid('firefox'):
-                    subprocess.Popen(['sudo', 'kill', '-9', str(l_pid)])
-
-                # close log file and save it
-                l_memLogFileSave = \
-                    re.sub('.csv', datetime.datetime.now().strftime('%Y-%m-%d_%H:%M:%S_%f') + '.csv', l_memLogFile)
-                shutil.copyfile(l_memLogFile, l_memLogFileSave)
-
-                # globals RAZ
-                g_ptcWrite = None
-                g_ctpRead = None
-                g_locChildPid = None
-
-                break
-
-            # loop 10 times / second
-            time.sleep(.1)
-
-    l_myMem3 = getMemUsage(os.getpid())
-
-    randomWait(G_WAIT_FB_MIN, G_WAIT_FB_MAX)
-
-    l_myMem4 = getMemUsage(os.getpid())
-
-    if g_verbose: print('Mem increase child setup      :',
-                        locale.format('%d', int(l_myMem2 - l_myMem), grouping=True))
-    if g_verbose: print('Mem increase child monitoring :',
-                        locale.format('%d', int(l_myMem3 - l_myMem2), grouping=True))
-    if g_verbose: print('Mem increase waiting          :',
-                        locale.format('%d', int(l_myMem4 - l_myMem3), grouping=True))
-
-    if g_verbose: print('likeOrComment Complete')
-
-    return l_retVal
-
 def gobbleMem():
     t = []
     while True:
@@ -313,27 +202,13 @@ def gobbleMem():
 
 def getPid(p_name):
     try:
-        l_rawPidof = subprocess.check_output(["pidof", p_name])
+        l_rawPidof = subprocess.check_output(['pidof', '-x', p_name])
     except subprocess.CalledProcessError as e:
         print('WARNING - pidof return error code:', e.returncode)
         print('pidof output:', e.output)
         return []
 
     return map(int, l_rawPidof.split())
-
-def childEnd():
-    global g_ptcWrite
-    global g_ctpRead
-    global g_locChildPid
-
-    if g_ptcWrite is not None:
-        g_ptcWrite.write('END\n')
-        g_ptcWrite.flush()
-
-        # globals RAZ
-        g_ptcWrite = None
-        g_locChildPid = None
-        g_ctpRead = None
 
 def getMemUsage(p_pid):
     l_scale = {'kB': 1024.0, 'mB': 1024.0 * 1024.0, 'KB': 1024.0, 'MB': 1024.0 * 1024.0}
@@ -345,34 +220,34 @@ def getMemUsage(p_pid):
 
     return 0.0
 
-def likeOrCommentExecute(p_idPost, p_message=''):
+def likeOrComment(p_idPost, p_message=''):
     global g_browserActions
-    global g_driver
+    global g_browserDriver
 
     # opens browser driver and reopen a new one every 20 actions
-    if g_driver is None or g_browserActions % 20 == 0:
+    if g_browserDriver is None or g_browserActions % 20 == 0:
         # close driver if open
-        if g_driver is not None: g_driver.close()
+        if g_browserDriver is not None: g_browserDriver.close()
 
         if g_verbose: print('Opening Selenium Firefox driver and log in')
         # open a new driver
-        g_driver = loginAs(g_phantomId, g_phantomPwd, p_api=False)
+        g_browserDriver = loginAs(g_phantomId, g_phantomPwd, p_api=False)
 
     l_url = 'http://www.facebook.com/{0}'.format(p_idPost)
     print('\nget:', l_url)
-    g_driver.get(l_url)
+    g_browserDriver.get(l_url)
 
     # ufi_highlighted_comment
     try:
         if g_verbose: print('\nStart waiting for ufi_highlighted_comment')
-        l_commBlock = WebDriverWait(g_driver, 15).until(
+        l_commBlock = WebDriverWait(g_browserDriver, 15).until(
             EC.presence_of_element_located((By.XPATH, '//div[@data-testid="ufi_highlighted_comment"]')))
 
         if g_verbose: print('\nFound ufi_highlighted_comment')
         time.sleep(1)
         if len(p_message) == 0:
             if g_verbose: print('\nStart waiting for UFILikeLink')
-            l_likeLink = WebDriverWait(g_driver, 15).until(
+            l_likeLink = WebDriverWait(g_browserDriver, 15).until(
                 EC.presence_of_element_located(
                         (By.XPATH,
                         '//div[@data-testid="ufi_highlighted_comment"]//a[@class="UFILikeLink"]')
@@ -386,7 +261,7 @@ def likeOrCommentExecute(p_idPost, p_message=''):
                 l_likeLink.click()
                 if g_verbose: print('\nUFILikeLink clicked')
                 time.sleep(.5)
-                l_likeLink = g_driver.find_element_by_xpath(
+                l_likeLink = g_browserDriver.find_element_by_xpath(
                     '//div[@data-testid="ufi_highlighted_comment"]//a[@class="UFILikeLink"]')
 
                 if l_countLoop > 10:
@@ -401,7 +276,7 @@ def likeOrCommentExecute(p_idPost, p_message=''):
         else:
             # UFIAddCommentInput _1osb _5yk1
             if g_verbose: print('\nStart waiting for ufi_reply_composer')
-            l_commentZone = WebDriverWait(g_driver, 15).until(
+            l_commentZone = WebDriverWait(g_browserDriver, 15).until(
                 EC.presence_of_element_located(
                     (By.XPATH,
                     '//div[@data-testid="ufi_reply_composer"]')
@@ -415,7 +290,7 @@ def likeOrCommentExecute(p_idPost, p_message=''):
 
             l_retVal = True
             if g_verbose:
-                l_commBlock = g_driver.find_element_by_xpath('//div[@data-testid="ufi_highlighted_comment"]')
+                l_commBlock = g_browserDriver.find_element_by_xpath('//div[@data-testid="ufi_highlighted_comment"]')
                 print('\n{0} -->'.format(p_idPost),
                       re.sub('\s+', ' ', l_commBlock.text).strip(),
                       '-->', p_message)
@@ -426,7 +301,7 @@ def likeOrCommentExecute(p_idPost, p_message=''):
     except EX.WebDriverException as e:
         print('\nUnknown WebDriverException -->', e)
         if len(p_message) == 0:
-            l_likeLink = g_driver.find_element_by_xpath(
+            l_likeLink = g_browserDriver.find_element_by_xpath(
                 '//div[@data-testid="ufi_highlighted_comment"]//a[@class="UFILikeLink"]')
             if l_likeLink.text == 'Unlike' or l_likeLink.text == 'Je n’aime plus':
                 l_retVal = True
@@ -452,7 +327,6 @@ def logOneLike(p_userId, p_objId, p_phantom):
     try:
         l_cursor.execute(l_query)
         g_connectorWrite.commit()
-        markLocalDBasDirty()
     except psycopg2.IntegrityError as e:
         print('WARNING: cannot insert into TB_PRESENCE_LIKE')
         print('PostgreSQL: {0}'.format(e))
@@ -474,7 +348,6 @@ def logOneComment(p_userId, p_objId, p_comm, p_phantom):
     try:
         l_cursor.execute(l_query)
         g_connectorWrite.commit()
-        markLocalDBasDirty()
     except psycopg2.IntegrityError as e:
         print('WARNING: cannot insert into TB_PRESENCE_COMM')
         print('PostgreSQL: {0}'.format(e))
@@ -495,7 +368,6 @@ def logOneRiver(p_idPage, p_idPost, p_link, p_phantom):
     try:
         l_cursor.execute(l_query)
         g_connectorWrite.commit()
-        markLocalDBasDirty()
     except psycopg2.IntegrityError as e:
         print('WARNING: cannot insert into TB_PRESENCE_RIVERS')
         print('PostgreSQL: {0}'.format(e))
@@ -503,7 +375,8 @@ def logOneRiver(p_idPage, p_idPost, p_link, p_phantom):
 
     l_cursor.close()
 
-def distributeLikes():
+# def distributeLikes():
+def prepareLikeActions(p_csvWriter, p_phantomId, p_phantomPwd, p_vpn, p_fbId):
     print('+++ Likes Distribution +++')
     l_cursor = g_connectorRead.cursor()
 
@@ -537,42 +410,18 @@ def distributeLikes():
 
     l_cursor.execute(l_query)
 
-    l_listLikes = []
     for l_idUser, l_userName, l_commId, l_commTxt in l_cursor:
         # only one in 3
         if random.randint(0, 2) == 0:
-            l_listLikes += [(l_idUser, l_userName, l_commId, l_commTxt)]
+            if len(l_commTxt) > 50:
+                l_commTxt = l_commTxt[0:50] + '...'
+
+            p_csvWriter.writerow(['LIKE', l_commId, l_idUser, l_userName, l_commTxt, ''])
 
     l_cursor.close()
 
-    l_count = 0
-    for l_idUser, l_userName, l_commId, l_commTxt in l_listLikes:
-        if len(l_commTxt) > 50:
-            l_commTxt = l_commTxt[0:50] + '...'
-
-        print('L <{4:<3}/{5:<3}> [{0:<20}] {1:<30} --> [{2:<40}] {3}'.format(
-            l_idUser, l_userName, l_commId, l_commTxt, l_count, len(l_listLikes)))
-
-        l_myMem = getMemUsage(os.getpid())
-        if likeOrComment(l_commId):
-            l_myMem2 = getMemUsage(os.getpid())
-            logOneLike(l_idUser, l_commId, g_phantomId)
-        else:
-            l_myMem2 = getMemUsage(os.getpid())
-            logOneLike(l_idUser, l_commId, '<Dead>')
-        l_myMem3 = getMemUsage(os.getpid())
-
-        if g_verbose: print('Mem increase likeOrComment:',
-                            locale.format('%d', int(l_myMem2 - l_myMem), grouping=True))
-        if g_verbose: print('Mem increase logOneLike   :',
-                            locale.format('%d', int(l_myMem3 - l_myMem2), grouping=True))
-
-        if g_verbose: print('Like done:', l_count)
-        l_count += 1
-
-    print('+++ Likes Distribution Complete +++')
-
-def distributeComments():
+#def distributeComments():
+def prepareCommActions(p_csvWriter, p_phantomId, p_phantomPwd, p_vpn, p_fbId):
     print('*** Comments Distribution ***')
     l_cursor = g_connectorRead.cursor()
 
@@ -606,112 +455,37 @@ def distributeComments():
 
     l_cursor.execute(l_query)
 
-    l_listComm = []
     for l_idUser, l_userName, l_commId, l_commTxt in l_cursor:
         # only one in 5 is perfomed
         if random.randint(0, 4) == 0:
-            l_listComm += [(l_idUser, l_userName, l_commId, l_commTxt)]
+            if len(l_commTxt) > 50:
+                l_commTxt = l_commTxt[0:50] + '...'
+
+            p_csvWriter.writerow(['COMM', l_commId, l_idUser, l_userName, l_commTxt, genComment()])
 
     l_cursor.close()
 
-    l_count = 0
-    for l_idUser, l_userName, l_commId, l_commTxt in l_listComm:
-        if len(l_commTxt) > 50:
-            l_commTxt = l_commTxt[0:50] + '...'
+#def genRiversLink():
+def prepareRiversActions(p_csvWriter, p_phantomId, p_phantomPwd, p_vpn, p_fbId):
+    print('--- Rivers Collective Image Distribution ---')
 
-        l_commentNew = genComment()
+    l_linkList = [
+        'https://www.facebook.com/photo.php?fbid=793238987485271',
+        'https://www.facebook.com/photo.php?fbid=793238920818611',
+        'https://www.facebook.com/photo.php?fbid=793238497485320',
+        'https://www.facebook.com/photo.php?fbid=793238374151999',
+        'https://www.facebook.com/photo.php?fbid=793238244152012',
+        'https://www.facebook.com/photo.php?fbid=793237847485385',
+        'https://www.facebook.com/photo.php?fbid=793236704152166',
+        'https://www.facebook.com/photo.php?fbid=793236634152173',
+        'https://www.facebook.com/photo.php?fbid=793236294152207',
+        'https://www.facebook.com/photo.php?fbid=793236250818878'
+    ]
+    for i in range(3):
+        l_link = random.choice(l_linkList)
+        l_linkList.remove(l_link)
 
-        print('K <{4:<3}/{6:<3}> [{0:<20}] {1:<30} --> [{2:<40}] {3} --> {5}'.format(
-            l_idUser, l_userName, l_commId, l_commTxt, l_count, l_commentNew, len(l_listComm)))
-
-        l_myMem = getMemUsage(os.getpid())
-        if likeOrComment(l_commId, l_commentNew):
-            l_myMem2 = getMemUsage(os.getpid())
-            logOneComment(l_idUser, l_commId, l_commentNew, g_phantomId)
-        else:
-            l_myMem2 = getMemUsage(os.getpid())
-            logOneComment(l_idUser, l_commId, '', '<Dead>')
-        l_myMem3 = getMemUsage(os.getpid())
-
-        if g_verbose: print('Mem increase likeOrComment:',
-                            locale.format('%d', int(l_myMem2 - l_myMem), grouping=True))
-        if g_verbose: print('Mem increase logOneComment:',
-                            locale.format('%d', int(l_myMem3 - l_myMem2), grouping=True))
-
-        if g_verbose: print('Comment done:', l_count)
-        l_count += 1
-
-    print('*** Comments Distribution Complete ***')
-
-def distributeRivers(p_driver, p_phantom):
-    print('*** Rivers Collective Image Distribution ***')
-    l_cursor = g_connectorRead.cursor()
-
-    l_query = """
-        select
-            "Z"."ID_PAGE" "ID_PAGE"
-            ,"O"."ID" "ID_POST"
-            ,"O"."ST_FB_TYPE"
-            ,"O"."ID_USER"
-            ,"O"."TX_MESSAGE"
-            ,"O"."DT_CRE"
-        from
-            "FBWatch"."TB_OBJ" "O" join (
-                select
-                    "J"."ID_PAGE" as "ID_PAGE"
-                    , max("J"."DT_CRE") "DLATEST"
-                from
-                    "FBWatch"."TB_OBJ" "J"
-                where
-                    "J"."ST_TYPE" = 'Post'
-                    and ("ID_USER" = "ID_PAGE" or length("ID_USER") = 0)
-                group by "J"."ID_PAGE"
-            ) "Z" on "Z"."ID_PAGE" = "O"."ID_PAGE" and "Z"."DLATEST" = "O"."DT_CRE"
-            left outer join "FBWatch"."TB_PRESENCE_RIVERS" "X" on "X"."ID_POST" = "O"."ID"
-        where
-            "O"."ST_TYPE" = 'Post'
-            and "X"."ID_POST" is null
-    """
-
-    try:
-        l_cursor.execute(l_query)
-
-        l_count = 0
-        for l_idPage, l_idPost, l_fbType, l_id_user, l_message, l_dtPost in l_cursor:
-            if len(l_message) > 50:
-                l_message = l_message[0:50] + '...'
-
-            l_newLink = genRiversLink()
-
-            print('{0:<3} [{1:<20}/{2:<20}] {3:<30} --> [{4}]'.format(
-                l_count, l_idPage, l_idPost, l_message, l_newLink))
-
-            if likeOrComment(l_idPost, l_newLink):
-                logOneRiver(l_idPage, l_idPost, l_newLink, g_phantomId)
-            else:
-                logOneRiver(l_idPage, l_idPost, '', '<Dead>')
-
-            l_count += 1
-
-    except Exception as e:
-        print('Unknown Exception: {0}'.format(repr(e)))
-        print(l_query)
-        sys.exit()
-
-    l_cursor.close()
-
-def genRiversLink():
-    l_link = random.choice([
-        'https://www.facebook.com/photo.php?fbid=121863904894315&set=pcb.121955864885119',
-        'https://www.facebook.com/photo.php?fbid=121868288227210&set=pb.100012121181501.-2207520000.1463124971.',
-        'https://www.facebook.com/photo.php?fbid=121867988227240&set=pb.100012121181501.-2207520000.1463124971.',
-        'https://www.facebook.com/photo.php?fbid=121867858227253&set=pb.100012121181501.-2207520000.1463124971.',
-        'https://www.facebook.com/photo.php?fbid=121867331560639&set=pb.100012121181501.-2207520000.1463124971.',
-        'https://www.facebook.com/photo.php?fbid=121865154894190&set=pb.100012121181501.-2207520000.1463124971.'
-    ])
-
-    return l_link
-
+        p_csvWriter.writerow(['RIVER', '', l_link, '', '', ''])
 
 g_commList = [
     'Indeed', 'Ok', 'That sounds right', 'I agree', '100% agree',
@@ -740,8 +514,13 @@ def genComment():
                 if i != j:
                     l_compoList += [l_commPunct[i] + ' ' + l_commPunct[j]]
 
-        g_choiceCommList = l_compoList + \
-                           g_commList + [c + '!' for c in g_commList] + [c + '!!' for c in g_commList]
+        l_simpleComList = g_commList + [c + '!' for c in g_commList] + [c + '!!' for c in g_commList]
+
+        for i in range(4):
+            l_simpleComList = l_simpleComList + l_simpleComList
+
+        g_choiceCommList = l_compoList + l_simpleComList
+
 
     l_commentNew = random.choice(g_choiceCommList)
 
@@ -755,130 +534,6 @@ def genComment():
         l_commentNew = re.sub(r'\.$', '', l_commentNew)
 
     return l_commentNew
-
-
-def performQuery(p_query, p_record=None, p_verbose=True):
-    l_cursor = g_connectorWrite.cursor()
-
-    try:
-        if p_record is None:
-            l_cursor.execute(p_query)
-        else:
-            l_cursor.execute(p_query, p_record)
-        g_connectorWrite.commit()
-    except psycopg2.IntegrityError as e:
-        if p_verbose:
-            print('WARNING: Could not fully execute:\n', p_query)
-            print('PostgreSQL: {0}'.format(e))
-        g_connectorWrite.rollback()
-    except Exception as e:
-        print('PG Unknown Exception: {0}'.format(repr(e)))
-        print('Query  :', p_query)
-        print('Record :', p_record)
-        sys.exit()
-
-    l_cursor.close()
-
-def sendBackTable(p_table, p_dateField):
-    l_cursor = g_connectorRead.cursor()
-
-    l_query = ''
-    try:
-        l_query = """
-            select * from "FBWatch"."{0}"
-            where "{1}" > (
-                select min("DT_LIKE")
-                from "FBWatch"."TB_PRESENCE_LIKE"
-                where "ID_PHANTOM" = '[Cache]'
-            )
-        """.format(p_table, p_dateField)
-        l_cursor.execute(l_query)
-
-        for l_record in l_cursor:
-            performQuery(
-                'insert into "FBWatch"."{0}" values({1})'.format(
-                    p_table,
-                    ','.join(['%s' for i in range(len(l_record))])),
-                l_record,
-                p_verbose=False
-            )
-    except Exception as e:
-        print('PG Unknown Exception: {0}'.format(repr(e)))
-        print(l_query)
-        sys.exit()
-
-    l_cursor.close()
-
-def cacheData():
-    global g_connectorRead
-    global g_connectorWrite
-
-    # only write here (into the local DB). Reading from the main DB is done with pg_dump for speed's sake
-    g_connectorWrite = psycopg2.connect(
-        host='localhost',
-        database="FBWatch",
-        user="postgres",
-        password="murugan!")
-
-    l_tableList = ['TB_PHANTOM', 'TB_PRESENCE_COMM', 'TB_PRESENCE_LIKE',
-                   'TB_USER_AGGREGATE', 'TB_OBJ']
-    for l_table in l_tableList:
-        print('+++ Dropping', l_table)
-        performQuery('drop table if exists "FBWatch"."{0}"'.format(l_table))
-
-
-    for l_table in l_tableList:
-        print('+++ Backuping', l_table, 'remotely on main server')
-        l_remoteCommand = (r'/usr/bin/pg_dump --host localhost --port 5432 --username "postgres" ' +
-                           r'--format custom --verbose ' +
-                           r'--file "/home/fi11222/disk-partage/Vrac/{0}.backup" ' +
-                           r'--table "\"FBWatch\".\"{0}\"" "FBWatch"').format(l_table)
-
-        executeRemotely(l_remoteCommand)
-
-    for l_table in l_tableList:
-        print('+++ Restoring locally:', l_table)
-        os.system('/usr/bin/pg_restore --host localhost --port 5432 --username "postgres" ' +
-                  '--dbname "FBWatch" --verbose ' +
-                  '"/home/fi11222/share-partage/Vrac/{0}.backup"'.format(l_table))
-
-    logOneLike('[Cache]', '[Cache]', '[Cache]')
-    g_connectorWrite.close()
-
-def updateMainDB():
-    global g_connectorRead
-    global g_connectorWrite
-
-    g_connectorRead = psycopg2.connect(
-        host='localhost',
-        database="FBWatch",
-        user="postgres",
-        password="murugan!")
-
-    g_connectorWrite = psycopg2.connect(
-        host='192.168.0.52',
-        database="FBWatch",
-        user="postgres",
-        password="murugan!")
-
-    l_suffixList = ['COMM', 'LIKE']
-    for l_suf in l_suffixList:
-        l_table = 'TB_PRESENCE_' + l_suf
-        l_dtField = 'DT_' + l_suf
-        print('Sending', l_table, 'contents back to main server')
-        sendBackTable(l_table, l_dtField)
-
-    g_connectorRead.close()
-    g_connectorWrite.close()
-
-def executeRemotely(p_command):
-    print('Remote command:', p_command)
-    p = subprocess.Popen(
-        'sshpass -p 15Eyyaka ssh -t -t fi11222@192.168.0.52 {0}'.format(p_command).split(' '),
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    l_output, l_err = p.communicate()
-    print('+++ stdout:', l_output.decode('utf-8').strip())
-    print('+++ stderr:', l_err.decode('utf-8').strip())
 
 def choosePhantom():
     # DB operations Will be executed before VPN cuts us off
@@ -953,6 +608,187 @@ def choosePhantom():
         subprocess.Popen(['sudo', 'kill', '-15', str(l_process.pid)])
         print('IP:', getOwnIp())
 
+def prepareActions(p_phantomId, p_phantomPwd, p_vpn, p_fbId):
+    l_csvFile = 'bp_actions_' + re.sub('\W', '-', p_phantomId) + '.csv'
+
+    print('Preparing actions for:', p_phantomId)
+    with open(l_csvFile, 'w') as l_fOut:
+        l_csvWriter = csv.writer(l_fOut,
+            delimiter=';',
+            quotechar='"',
+            lineterminator='\n',
+            quoting=csv.QUOTE_NONNUMERIC)
+
+        l_csvWriter.writerow(['ACTION', 'FB_ID', 'DATA0', 'DATA1', 'DATA2', 'DATA3'])
+        l_csvWriter.writerow(['LOG-IN', '', p_phantomId, p_phantomPwd, p_vpn, p_fbId])
+
+        prepareLikeActions(l_csvWriter, p_phantomId, p_phantomPwd, p_vpn, p_fbId)
+        prepareCommActions(l_csvWriter, p_phantomId, p_phantomPwd, p_vpn, p_fbId)
+        prepareRiversActions(l_csvWriter, p_phantomId, p_phantomPwd, p_vpn, p_fbId)
+
+def executeActions():
+    # record IP without VPN
+    l_baseIP = getOwnIp()
+
+    for l_file in glob.glob('bp_actions_*.csv'):
+        print('Executing:', l_file)
+
+        r, w = os.pipe()
+        r, w = os.fdopen(r, 'r'), os.fdopen(w, 'w')
+
+        l_locChildPid = os.fork()
+        if l_locChildPid:  # Parent
+            w.close()
+            print('Child PID:', l_locChildPid)
+            l_signal = r.readline().strip()
+            print('Child completed:', l_signal)
+
+            # check that the normal IP has come back
+            if getOwnIp() != l_baseIP:
+                print('ERROR - VPN improperly closed')
+                sys.exit()
+
+        else:  # Child
+            r.close()
+            executeActionFile(l_file)
+            w.write('OK')
+            sys.exit()
+
+def executeActionFile(p_file):
+    global g_phantomId
+    global g_phantomPwd
+    global g_browserDriver
+
+    # process object for the vpn when launched
+    l_vpnProcess = None
+
+    with open(p_file, 'r') as l_actionFile:
+        # file name for the log
+        l_logFilePath = re.sub('bp_actions_', 'bp_log_', p_file)
+        l_logExists = os.path.isfile(l_logFilePath)
+
+        with open(l_logFilePath, 'a') as l_logFile:
+            l_csvLogWriter = csv.writer(l_logFile,
+                delimiter=';',
+                quotechar='"',
+                lineterminator='\n',
+                quoting=csv.QUOTE_NONNUMERIC)
+
+            l_csvActionReader = csv.reader(l_actionFile,
+                delimiter=';',
+                quotechar='"',
+                lineterminator='\n',
+                quoting=csv.QUOTE_NONNUMERIC)
+
+            # skip action file headers
+            next(l_csvActionReader, None)
+            if not l_logExists:
+                # if log just created --> add header row
+                l_csvLogWriter.writerow(['ACTION', 'PHANTOM_ID', 'FB_ID', 'DATA'])
+
+            l_rowList = []
+            l_phantomId = None
+            l_phantomPwd = None
+            l_vpn = None
+            l_fbId = None
+            # slurp in all rows in the action file ...
+            for l_row in l_csvActionReader:
+                # ... except the one containing the log-in data
+                if l_row[0] == 'LOG-IN':
+                    l_phantomId = l_row[2]
+                    l_phantomPwd = l_row[3]
+                    l_vpn = l_row[4]
+                    l_fbId = l_row[5]
+                    print('Logging in as:', l_phantomId, l_phantomPwd, l_vpn)
+
+                    # store log-in parameters in globals so that likeOrComment() can access them
+                    g_phantomId = l_phantomId
+                    g_phantomPwd = l_phantomPwd
+                else:
+                    l_rowList += [l_row]
+
+            l_actionFile.close()
+
+            # turn on vpn
+            if l_vpn is not None:
+                print('Starting vpn')
+                l_vpnProcess = switchonVpn(l_vpn, p_verbose=True)
+
+            l_actionTotalCount = len(l_rowList)
+            # execute actions at random
+            for i in range(l_actionTotalCount):
+                l_row = random.choice(l_rowList)
+
+                l_action = l_row[0]
+                l_objId = l_row[1]
+                l_idUser = l_row[2]
+                l_userName = l_row[3]
+                l_commTxt = l_row[4]
+
+                # perform like action
+                if l_action == 'LIKE':
+                    print('L <{4:<3}/{5:<3}> [{0:<20}] {1:<30} --> [{2:<40}] {3}'.format(
+                        l_idUser, l_userName, l_objId, l_commTxt, i, l_actionTotalCount))
+
+                    if likeOrComment(l_objId, p_message=''):
+                        l_csvLogWriter.writerow(['L', l_phantomId, l_objId, ''])
+
+                # perform comment action
+                elif l_action == 'COMM':
+                    l_newComm = l_row[5]
+                    print('K <{4:<3}/{6:<3}> [{0:<20}] {1:<30} --> [{2:<40}] {3} --> {5}'.format(
+                        l_idUser, l_userName, l_objId, l_commTxt, i, l_newComm, l_actionTotalCount))
+
+                    if likeOrComment(l_objId, p_message=l_newComm):
+                        l_csvLogWriter.writerow(['K', l_phantomId, l_objId, l_newComm])
+
+                # perform rivers image action
+                elif l_action == 'RIVER':
+                    l_link = l_row[2]
+                    print('R <{0:<3}/{1:<3}> --> {2}'.format(i, l_actionTotalCount, l_link))
+                else:
+                    print('Unknown action:', l_action)
+
+                # remove the row just executed from the list
+                l_rowList.remove(l_row)
+
+                # write back remaining rows to file, to be able to execute them after resuming post crash
+                if len(l_rowList):
+                    with open(p_file, 'w') as l_fOut:
+                        l_csvWriter = csv.writer(l_fOut,
+                                                 delimiter=';',
+                                                 quotechar='"',
+                                                 lineterminator='\n',
+                                                 quoting=csv.QUOTE_NONNUMERIC)
+
+                        l_csvWriter.writerow(['ACTION', 'FB_ID', 'DATA0', 'DATA1', 'DATA2', 'DATA3'])
+                        l_csvWriter.writerow(['LOG-IN', '', l_phantomId, l_phantomPwd, l_vpn, l_fbId])
+
+                        for r in l_rowList:
+                            l_csvWriter.writerow(r)
+
+                    # wait
+                    randomWait(G_WAIT_FB_MIN, G_WAIT_FB_MAX)
+                else:
+                    # delete action file if no more actions
+                    os.remove(p_file)
+                    # no need to wait ...
+
+    # close Selenium web driver
+    if g_browserDriver is not None:
+        g_browserDriver.close()
+        g_browserDriver = None
+
+    # turn off vpn
+    if l_vpnProcess is not None:
+        print('Stopping VPN')
+        # use signal SIGTERM (15) to allow children to close as well
+        subprocess.Popen(['sudo', 'kill', '-15', str(l_vpnProcess.pid)])
+        print('IP:', getOwnIp())
+
+def logActions():
+    pass
+
 # ---------------------------------------------------- Main ------------------------------------------------------------
 if __name__ == "__main__":
     print('+------------------------------------------------------------+')
@@ -960,7 +796,7 @@ if __name__ == "__main__":
     print('|                                                            |')
     print('| Basic facebook presence                                    |')
     print('|                                                            |')
-    print('| v. 2.6 - 24/05/2016                                        |')
+    print('| v. 3.0 - 30/05/2016                                        |')
     print('+------------------------------------------------------------+')
 
     random.seed()
@@ -973,31 +809,34 @@ if __name__ == "__main__":
     l_parser.add_argument('-q', help='Quiet: less progress info', action='store_true')
     l_parser.add_argument('--NoLikes', help='Do not perform likes distribution', action='store_true')
     l_parser.add_argument('--NoComments', help='Do not perform comments distribution', action='store_true')
-    l_parser.add_argument('--NoCache', help='Do not update local DB cache', action='store_true')
-    l_parser.add_argument('--CleanLocal', help='Only cleans up local DB', action='store_true')
     l_parser.add_argument('--Test', help='No VPN and only KA as user', action='store_true')
     l_parser.add_argument('--GenComment', help='Test gen comment', action='store_true')
     l_parser.add_argument('--SshTest', help='Test remote command execution', action='store_true')
     l_parser.add_argument('--LOCTest', help='Test likeOrComment', action='store_true')
+    l_parser.add_argument('--TestMonitor', help='Test memory monitoring', action='store_true')
 
     # dummy class to receive the parsed args
     class C:
         def __init__(self):
             self.l = False
             self.q = False
-            self.GenComment = False
             self.NoLikes = False
-            self.CleanLocal = False
+            self.NoComments = False
+            self.GenComment = False
             self.Test = False
             self.SshTest = False
-            self.NoCache = False
-            self.NoComments = False
             self.LOCTest = False
+            self.TestMonitor = False
 
     # do the argument parse
     c = C()
     l_parser.parse_args()
     parser = l_parser.parse_args(namespace=c)
+
+    if c.TestMonitor:
+        launchMemoryMonitor()
+        l_quit = input('Finished? ')
+        sys.exit()
 
     if c.l:
         choosePhantom()
@@ -1016,7 +855,6 @@ if __name__ == "__main__":
         g_phantomPwd = '12Alhamdulillah'
         likeOrComment('10154315425328690_10154326253248690', 'Well ?')
         likeOrComment('10154315425328690_10154326253248690', 'Are you really sure ?')
-        childEnd()
         sys.exit()
 
     if c.SshTest:
@@ -1035,124 +873,53 @@ if __name__ == "__main__":
         print('+++ stderr:', l_err.decode('utf-8').strip())
         sys.exit()
 
-    if c.Test:
-        # Test set-up --> direct connection
+    # start of normal execution
+
+    # create new action files only if there are no logs pending, i.e. if in a "clean" state
+    if not glob.glob('bp_log_*.csv'):
         g_connectorRead = psycopg2.connect(
             host='192.168.0.52',
             database="FBWatch",
             user="postgres",
             password="murugan!")
-        g_connectorWrite = psycopg2.connect(
-            host='192.168.0.52',
-            database="FBWatch",
-            user="postgres",
-            password="murugan!")
-    else:
-        # get local copies of tables used here
-        if isLocalDBDirty():
-            updateMainDB()
-            markLocalDBasClean()
 
-        if c.CleanLocal:
-            sys.exit()
+        if c.Test:
+            prepareActions('kabir.eridu@gmail.com', '12Alhamdulillah', '', '')
+        else:
+            l_cursor = g_connectorRead.cursor()
 
-        if not c.NoCache:
-            cacheData()
+            l_query = """
+                select * from "FBWatch"."TB_PHANTOM"
+            """
 
-        # switch to local DB to avoid being cut off by VPN
-        g_connectorRead = psycopg2.connect(
-            host='localhost',
-            database="FBWatch",
-            user="postgres",
-            password="murugan!")
-        g_connectorWrite = psycopg2.connect(
-            host='localhost',
-            database="FBWatch",
-            user="postgres",
-            password="murugan!")
+            # No exception catching here to allow full stack trace printout
+            l_cursor.execute(l_query)
 
-    l_cursor = g_connectorRead.cursor()
+            for l_phantomId, l_phantomPwd, l_vpn, l_fbId in l_cursor:
+                l_phantomId = l_phantomId.strip()
+                l_phantomPwd = l_phantomPwd.strip()
 
-    l_query = """
-        select * from "FBWatch"."TB_PHANTOM"
-    """
+                prepareActions(l_phantomId, l_phantomPwd, l_vpn, l_fbId)
 
-    # No exception catching here to allow full stack trace printout
+            l_cursor.close()
 
-    l_phantomList = []
-    RecPhantom = namedtuple('RecPhantom', 'PhantomId PhantomPwd PhantomVpn FbUserId')
-    l_cursor.execute(l_query)
+        g_connectorRead.close()
 
-    for l_phantomId, l_phantomPwd, l_vpn, l_fbId in l_cursor:
-        l_phantomId = l_phantomId.strip()
-        l_phantomPwd = l_phantomPwd.strip()
+    launchMemoryMonitor()
 
-        l_phantomList += [RecPhantom(l_phantomId, l_phantomPwd, l_vpn, l_fbId)]
+    # action execution, with no DB connections
+    executeActions()
 
-    l_cursor.close()
+    # log actions to main DB
+    g_connectorWrite = psycopg2.connect(
+        host='192.168.0.52',
+        database="FBWatch",
+        user="postgres",
+        password="murugan!")
 
-    g_connectorRead.close()
+    logActions()
+
     g_connectorWrite.close()
 
-    for l_phantomId, l_phantomPwd, l_vpn, l_fbId in l_phantomList:
-        g_phantomId = l_phantomId.strip()
-        g_phantomPwd = l_phantomPwd.strip()
 
-        if c.Test:
-            # test parameters and no VPN
-            g_phantomId = 'kabir.eridu@gmail.com'
-            g_phantomPwd = '12Alhamdulillah'
-        else:
-            l_process = switchonVpn(l_vpn, p_verbose=True)
-
-        # if failure to connect vpn --> next phantom
-        if l_process == None: continue
-
-        if c.Test or l_process.poll() is None:
-            print('g_phantomId :', g_phantomId)
-            print('g_phantomPwd:', g_phantomPwd)
-
-            # no longer necessary because handled inside likeOrComment()
-            # g_driver = loginAs(g_phantomId, g_phantomPwd, p_api=False)
-
-            # separate connection for each phantom to avoid any possible interference from vpn
-            g_connectorRead = psycopg2.connect(
-                host='localhost',
-                database="FBWatch",
-                user="postgres",
-                password="murugan!")
-            g_connectorWrite = psycopg2.connect(
-                host='localhost',
-                database="FBWatch",
-                user="postgres",
-                password="murugan!")
-
-            if not c.NoLikes:
-                distributeLikes()
-
-            if not c.NoComments:
-                distributeComments()
-
-            g_connectorRead.close()
-            g_connectorWrite.close()
-
-            # sends signal to child process to end (also closes current firefox Selenium driver in the child)
-            childEnd()
-
-        if c.Test:
-            # only one user if in test mode --> no need to loop
-            break
-        elif l_process.poll() is None:
-            # kill the VPN process (-15 = SIGTERM to allow child termination)
-            print('Stopping VPN')
-            subprocess.Popen(['sudo', 'kill', '-15', str(l_process.pid)])
-            print('IP:', getOwnIp())
-        else:
-            print('Big problem!!')
-            sys.exit()
-
-    # update main DB with results
-    if not c.Test:
-        updateMainDB()
-        markLocalDBasClean()
 
