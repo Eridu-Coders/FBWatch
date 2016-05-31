@@ -27,20 +27,18 @@ VPN_TIMEOUT = 60.0
 
 # Calls a "what is my Ip" web service to get own IP
 def getOwnIp():
-    # http://icanhazip.com/
-    l_myIp = None
-
     l_myIpServices = ['http://icanhazip.com/', 'https://ipapi.co/ip/']
     l_timeout = 30
 
     for l_ipServiceUrl in l_myIpServices:
         print('Trying [{0}] timeout = {1} seconds ...'.format(l_ipServiceUrl, l_timeout))
         try:
-            l_myIp = urllib.request.urlopen(l_ipServiceUrl, timeout=l_timeout).read().decode('utf-8').strip()
+            return urllib.request.urlopen(l_ipServiceUrl, timeout=l_timeout).read().decode('utf-8').strip()
         except urllib.error.URLError as e:
             print('Cannot Open {0} service:'.format(l_ipServiceUrl), repr(e))
 
-    return l_myIp
+    print('All attempts failed')
+    return None
 
 # turns on Openvpn with the config file given in parameter
 # returns a process

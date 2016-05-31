@@ -495,7 +495,7 @@ def prepareRiversActions(p_csvWriter, p_phantomId, p_phantomPwd, p_vpn, p_fbId):
         l_link = random.choice(l_linkList)
         l_linkList.remove(l_link)
 
-        p_csvWriter.writerow(['RIVER', '', l_link, '', '', ''])
+        p_csvWriter.writerow(['RIVER', '', '', '', '', l_link])
 
 g_commList = [
     'Indeed', 'Ok', 'That sounds right', 'I agree', '100% agree',
@@ -656,7 +656,8 @@ def executeActions():
             print('Child completed:', l_signal)
 
             # check that the normal IP has come back
-            if getOwnIp() != l_baseIP:
+            l_currentIP = getOwnIp()
+            if l_baseIP is not None and l_currentIP is not None and l_currentIP != l_baseIP:
                 print('ERROR - VPN improperly closed')
                 sys.exit()
 
@@ -759,10 +760,12 @@ def executeActionFile(p_file):
 
                     # perform rivers image action
                     elif l_action == 'RIVER':
-                        l_link = l_row[2]
+                        l_link = l_row[5]
                         print('R <{0:<3}/{1:<3}> --> {2}'.format(i, l_actionTotalCount, l_link))
                     else:
                         print('Unknown action:', l_action)
+
+                    l_logFile.flush()
 
                     # remove the row just executed from the list
                     l_rowList.remove(l_row)
