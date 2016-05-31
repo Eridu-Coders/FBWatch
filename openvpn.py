@@ -29,17 +29,16 @@ VPN_TIMEOUT = 60.0
 def getOwnIp():
     # http://icanhazip.com/
     l_myIp = None
-    try:
-        l_myIp = urllib.request.urlopen('http://icanhazip.com/').read().decode('utf-8').strip()
-    except urllib.error.URLError as e:
-        print('Cannot Open http://icanhazip.com/ service:', repr(e))
 
-    # https://ipapi.co/ip/
-    if l_myIp is None:
+    l_myIpServices = ['http://icanhazip.com/', 'https://ipapi.co/ip/']
+    l_timeout = 30
+
+    for l_ipServiceUrl in l_myIpServices:
+        print('Trying [{0}] timeout = {1} seconds ...'.format(l_ipServiceUrl, l_timeout))
         try:
-            l_myIp = urllib.request.urlopen('https://ipapi.co/ip/').read().decode('utf-8').strip()
+            l_myIp = urllib.request.urlopen(l_ipServiceUrl, timeout=l_timeout).read().decode('utf-8').strip()
         except urllib.error.URLError as e:
-            print('Cannot Open https://ipapi.co/ip/ service:', repr(e))
+            print('Cannot Open {0} service:'.format(l_ipServiceUrl), repr(e))
 
     return l_myIp
 
@@ -48,7 +47,7 @@ def getOwnIp():
 # If alive --> everything ok
 # if dead (poll() not None) --> error of some kind
 def switchonVpn(p_config, p_verbose=True):
-
+    print('switchonVpn() HELLO')
     # function to output lines as a queue
     # (1) from http://stackoverflow.com/questions/375427/non-blocking-read-on-a-subprocess-pipe-in-python
     def enqueue_output(out, queue):
@@ -111,6 +110,7 @@ def switchonVpn(p_config, p_verbose=True):
 
                 break
 
+    print('switchonVpn() END')
     return l_process
 
 # ---------------------------------------------------- Main section ----------------------------------------------------

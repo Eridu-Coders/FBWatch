@@ -128,6 +128,8 @@ def launchMemoryMonitor():
     global g_monitorPid
     print('Launching Memory Monitor')
 
+    l_parentPid = os.getpid()
+
     g_monitorPid = os.fork()
     if g_monitorPid:  # Parent
         print('Monitor PID:', g_monitorPid)
@@ -136,7 +138,7 @@ def launchMemoryMonitor():
         while True:
             l_csvMonitor = 'mem_monitor.csv'
             with open(l_csvMonitor, 'w') as l_fMonitor:
-                l_fMonitor.write('"PID";"DATE";"MEM"\n')
+                l_fMonitor.write('"PID";"TYPE";"DATE";"MEM"\n')
 
                 # 5 min monitoring spans
                 for i in range(5 * 60 * l_measurementsPerSec):
@@ -144,8 +146,15 @@ def launchMemoryMonitor():
                     for l_pid in getPid('basic_presence.py'):
                         l_pidCount += 1
                         l_mem = getMemUsage(l_pid)
-                        l_fMonitor.write('"{0}";"{1}";{2}\n'.format(
+                        if l_pid == l_parentPid:
+                            l_type = 'P'
+                        elif l_pid == os.getpid():
+                            l_type = 'M'
+                        else:
+                            l_type = 'X'
+                        l_fMonitor.write('"{0}";"{1}";"{2}";{3}\n'.format(
                             l_pid,
+                            l_type,
                             datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f'),
                             int(l_mem)
                         ))
@@ -157,7 +166,7 @@ def launchMemoryMonitor():
                             for l_pid in getPid('basic_presence.py'):
                                 if l_pid != os.getpid():
                                     subprocess.Popen(['sudo', 'kill', '-9', str(l_pid)])
-                                    l_fMonitor.write('"{0}";"{1}";{2}\n'.format(
+                                    l_fMonitor.write('"{0}";;"{1}";{2}\n'.format(
                                         l_pid,
                                         datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f'),
                                         -1
@@ -234,19 +243,19 @@ def likeOrComment(p_idPost, p_message=''):
         g_browserDriver = loginAs(g_phantomId, g_phantomPwd, p_api=False)
 
     l_url = 'http://www.facebook.com/{0}'.format(p_idPost)
-    print('\nget:', l_url)
+    print('get:', l_url)
     g_browserDriver.get(l_url)
 
     # ufi_highlighted_comment
     try:
-        if g_verbose: print('\nStart waiting for ufi_highlighted_comment')
+        if g_verbose: print('Start waiting for ufi_highlighted_comment')
         l_commBlock = WebDriverWait(g_browserDriver, 15).until(
             EC.presence_of_element_located((By.XPATH, '//div[@data-testid="ufi_highlighted_comment"]')))
 
-        if g_verbose: print('\nFound ufi_highlighted_comment')
+        if g_verbose: print('Found ufi_highlighted_comment')
         time.sleep(1)
         if len(p_message) == 0:
-            if g_verbose: print('\nStart waiting for UFILikeLink')
+            if g_verbose: print('Start waiting for UFILikeLink')
             l_likeLink = WebDriverWait(g_browserDriver, 15).until(
                 EC.presence_of_element_located(
                         (By.XPATH,
@@ -254,52 +263,52 @@ def likeOrComment(p_idPost, p_message=''):
                     )
                 )
 
-            if g_verbose: print('\nFound UFILikeLink')
+            if g_verbose: print('Found UFILikeLink')
             l_countLoop = 0
             l_retVal = True
             while l_likeLink.text != 'Unlike' and l_likeLink.text != 'Je n’aime plus':
                 l_likeLink.click()
-                if g_verbose: print('\nUFILikeLink clicked')
+                if g_verbose: print('UFILikeLink clicked')
                 time.sleep(.5)
                 l_likeLink = g_browserDriver.find_element_by_xpath(
                     '//div[@data-testid="ufi_highlighted_comment"]//a[@class="UFILikeLink"]')
 
                 if l_countLoop > 10:
                     l_retVal = False
-                    if g_verbose: print('\nBroke loop because count > 10')
+                    if g_verbose: print('Broke loop because count > 10')
                     break
                 else:
                     l_countLoop += 1
 
             if g_verbose:
-                print('\nLiked {0} -->'.format(p_idPost), re.sub('\s+', ' ', l_commBlock.text).strip())
+                print('Liked {0} -->'.format(p_idPost), re.sub('\s+', ' ', l_commBlock.text).strip())
         else:
             # UFIAddCommentInput _1osb _5yk1
-            if g_verbose: print('\nStart waiting for ufi_reply_composer')
+            if g_verbose: print('Start waiting for ufi_reply_composer')
             l_commentZone = WebDriverWait(g_browserDriver, 15).until(
                 EC.presence_of_element_located(
                     (By.XPATH,
                     '//div[@data-testid="ufi_reply_composer"]')
                 )
             )
-            if g_verbose: print('\nFound ufi_reply_composer')
+            if g_verbose: print('Found ufi_reply_composer')
 
             time.sleep(.5)
             l_commentZone.send_keys(re.sub('\s+', ' ', p_message).strip() + '\n')
-            if g_verbose: print('\nMessage sent')
+            if g_verbose: print('Message sent')
 
             l_retVal = True
             if g_verbose:
                 l_commBlock = g_browserDriver.find_element_by_xpath('//div[@data-testid="ufi_highlighted_comment"]')
-                print('\n{0} -->'.format(p_idPost),
+                print('{0} -->'.format(p_idPost),
                       re.sub('\s+', ' ', l_commBlock.text).strip(),
                       '-->', p_message)
 
     except EX.TimeoutException:
-        print('\nDid not find highlighted comment block or like link')
+        print('Did not find highlighted comment block or like link')
         l_retVal = False
     except EX.WebDriverException as e:
-        print('\nUnknown WebDriverException -->', e)
+        print('Unknown WebDriverException -->', e)
         if len(p_message) == 0:
             l_likeLink = g_browserDriver.find_element_by_xpath(
                 '//div[@data-testid="ufi_highlighted_comment"]//a[@class="UFILikeLink"]')
@@ -314,7 +323,7 @@ def likeOrComment(p_idPost, p_message=''):
     return l_retVal
 
 def logOneLike(p_userId, p_objId, p_phantom):
-    if g_verbose: print('Logging like:', p_userId, p_objId, p_phantom)
+    print('Logging like:', p_userId, p_objId, p_phantom)
     l_cursor = g_connectorWrite.cursor()
 
     l_query = """
@@ -335,7 +344,7 @@ def logOneLike(p_userId, p_objId, p_phantom):
     l_cursor.close()
 
 def logOneComment(p_userId, p_objId, p_comm, p_phantom):
-    if g_verbose: print('Logging Comment:', p_userId, p_objId, p_phantom, p_comm)
+    print('Logging Comment:', p_userId, p_objId, p_phantom, p_comm)
     l_cursor = g_connectorWrite.cursor()
 
     l_query = """
@@ -355,14 +364,15 @@ def logOneComment(p_userId, p_objId, p_comm, p_phantom):
 
     l_cursor.close()
 
-def logOneRiver(p_idPage, p_idPost, p_link, p_phantom):
+def logOneRiver(p_link, p_phantom):
+    print('Logging River:', p_link, p_phantom)
     l_cursor = g_connectorWrite.cursor()
 
     l_query = """
-        INSERT INTO "FBWatch"."TB_PRESENCE_RIVERS"("ID_PAGE", "ID_POST", "ST_LINK", "DT_COMM", "ID_PHANTOM")
-        VALUES( '{0}', '{1}', '{2}', CURRENT_TIMESTAMP, '{3}' )
+        INSERT INTO "FBWatch"."TB_PRESENCE_RIVERS"("ST_LINK", "DT_COMM", "ID_PHANTOM")
+        VALUES( '{0}', CURRENT_TIMESTAMP, '{1}' )
     """.format(
-        p_idPage, p_idPost, cleanForInsert(p_link), p_phantom)
+        cleanForInsert(p_link), p_phantom)
 
     # print(l_query)
     try:
@@ -377,7 +387,7 @@ def logOneRiver(p_idPage, p_idPost, p_link, p_phantom):
 
 # def distributeLikes():
 def prepareLikeActions(p_csvWriter, p_phantomId, p_phantomPwd, p_vpn, p_fbId):
-    print('+++ Likes Distribution +++')
+    print('+++ Likes Actions +++')
     l_cursor = g_connectorRead.cursor()
 
     l_query = """
@@ -422,7 +432,7 @@ def prepareLikeActions(p_csvWriter, p_phantomId, p_phantomPwd, p_vpn, p_fbId):
 
 #def distributeComments():
 def prepareCommActions(p_csvWriter, p_phantomId, p_phantomPwd, p_vpn, p_fbId):
-    print('*** Comments Distribution ***')
+    print('*** Comments Actions ***')
     l_cursor = g_connectorRead.cursor()
 
     l_query = """
@@ -467,7 +477,7 @@ def prepareCommActions(p_csvWriter, p_phantomId, p_phantomPwd, p_vpn, p_fbId):
 
 #def genRiversLink():
 def prepareRiversActions(p_csvWriter, p_phantomId, p_phantomPwd, p_vpn, p_fbId):
-    print('--- Rivers Collective Image Distribution ---')
+    print('--- Rivers Collective Image Actions ---')
 
     l_linkList = [
         'https://www.facebook.com/photo.php?fbid=793238987485271',
@@ -628,7 +638,9 @@ def prepareActions(p_phantomId, p_phantomPwd, p_vpn, p_fbId):
 
 def executeActions():
     # record IP without VPN
+    print('Getting base IP ...')
     l_baseIP = getOwnIp()
+    print('Base IP:', l_baseIP)
 
     for l_file in glob.glob('bp_actions_*.csv'):
         print('Executing:', l_file)
@@ -684,7 +696,7 @@ def executeActionFile(p_file):
             next(l_csvActionReader, None)
             if not l_logExists:
                 # if log just created --> add header row
-                l_csvLogWriter.writerow(['ACTION', 'PHANTOM_ID', 'FB_ID', 'DATA'])
+                l_csvLogWriter.writerow(['ACTION', 'PHANTOM_ID', 'OBJ_ID', 'USER_ID', 'DATA'])
 
             l_rowList = []
             l_phantomId = None
@@ -714,65 +726,68 @@ def executeActionFile(p_file):
                 print('Starting vpn')
                 l_vpnProcess = switchonVpn(l_vpn, p_verbose=True)
 
-            l_actionTotalCount = len(l_rowList)
-            # execute actions at random
-            for i in range(l_actionTotalCount):
-                l_row = random.choice(l_rowList)
+            if l_vpnProcess is None:
+                print('No VPN --> ABORTING ...')
+            else:
+                l_actionTotalCount = len(l_rowList)
+                # execute actions at random
+                for i in range(l_actionTotalCount):
+                    l_row = random.choice(l_rowList)
 
-                l_action = l_row[0]
-                l_objId = l_row[1]
-                l_idUser = l_row[2]
-                l_userName = l_row[3]
-                l_commTxt = l_row[4]
+                    l_action = l_row[0]
+                    l_objId = l_row[1]
+                    l_idUser = l_row[2]
+                    l_userName = l_row[3]
+                    l_commTxt = l_row[4]
 
-                # perform like action
-                if l_action == 'LIKE':
-                    print('L <{4:<3}/{5:<3}> [{0:<20}] {1:<30} --> [{2:<40}] {3}'.format(
-                        l_idUser, l_userName, l_objId, l_commTxt, i, l_actionTotalCount))
+                    # perform like action
+                    if l_action == 'LIKE':
+                        print('L <{4:<3}/{5:<3}> [{0:<20}] {1:<30} --> [{2:<40}] {3}'.format(
+                            l_idUser, l_userName, l_objId, l_commTxt, i, l_actionTotalCount))
 
-                    if likeOrComment(l_objId, p_message=''):
-                        l_csvLogWriter.writerow(['L', l_phantomId, l_objId, ''])
+                        if likeOrComment(l_objId, p_message=''):
+                            l_csvLogWriter.writerow(['L', l_phantomId, l_objId, l_idUser, ''])
 
-                # perform comment action
-                elif l_action == 'COMM':
-                    l_newComm = l_row[5]
-                    print('K <{4:<3}/{6:<3}> [{0:<20}] {1:<30} --> [{2:<40}] {3} --> {5}'.format(
-                        l_idUser, l_userName, l_objId, l_commTxt, i, l_newComm, l_actionTotalCount))
+                    # perform comment action
+                    elif l_action == 'COMM':
+                        l_newComm = l_row[5]
+                        print('K <{4:<3}/{6:<3}> [{0:<20}] {1:<30} --> [{2:<40}] {3} --> {5}'.format(
+                            l_idUser, l_userName, l_objId, l_commTxt, i, l_newComm, l_actionTotalCount))
 
-                    if likeOrComment(l_objId, p_message=l_newComm):
-                        l_csvLogWriter.writerow(['K', l_phantomId, l_objId, l_newComm])
+                        if likeOrComment(l_objId, p_message=l_newComm):
+                            l_csvLogWriter.writerow(['K', l_phantomId, l_objId, l_idUser, l_newComm])
 
-                # perform rivers image action
-                elif l_action == 'RIVER':
-                    l_link = l_row[2]
-                    print('R <{0:<3}/{1:<3}> --> {2}'.format(i, l_actionTotalCount, l_link))
-                else:
-                    print('Unknown action:', l_action)
+                    # perform rivers image action
+                    elif l_action == 'RIVER':
+                        l_link = l_row[2]
+                        print('R <{0:<3}/{1:<3}> --> {2}'.format(i, l_actionTotalCount, l_link))
+                    else:
+                        print('Unknown action:', l_action)
 
-                # remove the row just executed from the list
-                l_rowList.remove(l_row)
+                    # remove the row just executed from the list
+                    l_rowList.remove(l_row)
 
-                # write back remaining rows to file, to be able to execute them after resuming post crash
-                if len(l_rowList):
-                    with open(p_file, 'w') as l_fOut:
-                        l_csvWriter = csv.writer(l_fOut,
-                                                 delimiter=';',
-                                                 quotechar='"',
-                                                 lineterminator='\n',
-                                                 quoting=csv.QUOTE_NONNUMERIC)
+                    # write back remaining rows to file, to be able to execute them after resuming post crash
+                    if len(l_rowList):
+                        with open(p_file, 'w') as l_fOut:
+                            l_csvWriter = csv.writer(l_fOut,
+                                                     delimiter=';',
+                                                     quotechar='"',
+                                                     lineterminator='\n',
+                                                     quoting=csv.QUOTE_NONNUMERIC)
 
-                        l_csvWriter.writerow(['ACTION', 'FB_ID', 'DATA0', 'DATA1', 'DATA2', 'DATA3'])
-                        l_csvWriter.writerow(['LOG-IN', '', l_phantomId, l_phantomPwd, l_vpn, l_fbId])
+                            l_csvWriter.writerow(['ACTION', 'FB_ID', 'DATA0', 'DATA1', 'DATA2', 'DATA3'])
+                            l_csvWriter.writerow(['LOG-IN', '', l_phantomId, l_phantomPwd, l_vpn, l_fbId])
 
-                        for r in l_rowList:
-                            l_csvWriter.writerow(r)
+                            for r in l_rowList:
+                                l_csvWriter.writerow(r)
 
-                    # wait
-                    randomWait(G_WAIT_FB_MIN, G_WAIT_FB_MAX)
-                else:
-                    # delete action file if no more actions
-                    os.remove(p_file)
-                    # no need to wait ...
+                        # wait
+                        randomWait(G_WAIT_FB_MIN, G_WAIT_FB_MAX)
+                    else:
+                        # delete action file if no more actions
+                        os.remove(p_file)
+                        # no need to wait ...
 
     # close Selenium web driver
     if g_browserDriver is not None:
@@ -787,7 +802,33 @@ def executeActionFile(p_file):
         print('IP:', getOwnIp())
 
 def logActions():
-    pass
+    print('Logging actions to main DB')
+    for l_logFilePath in glob.glob('bp_log_*.csv'):
+        with open(l_logFilePath, 'r') as l_logFile:
+            l_csvLogReader = csv.reader(l_logFile,
+                delimiter=';',
+                quotechar='"',
+                lineterminator='\n',
+                quoting=csv.QUOTE_NONNUMERIC)
+
+            # skip action file headers
+            next(l_csvLogReader, None)
+
+            for l_row in l_csvLogReader:
+                l_action = l_row[0]
+                l_phantomId = l_row[1]
+                l_objId = l_row[2]
+                l_idUser = l_row[3]
+                l_data = l_row[4]
+
+                if l_action == 'L':
+                    logOneLike(l_idUser, l_objId, l_phantomId)
+                elif l_action == 'K':
+                    logOneComment(l_idUser, l_objId, l_data, l_phantomId)
+
+        os.remove(l_logFilePath)
+
+    print('Logging actions to main DB Complete')
 
 # ---------------------------------------------------- Main ------------------------------------------------------------
 if __name__ == "__main__":
@@ -876,7 +917,7 @@ if __name__ == "__main__":
     # start of normal execution
 
     # create new action files only if there are no logs pending, i.e. if in a "clean" state
-    if not glob.glob('bp_log_*.csv'):
+    if not glob.glob('bp_*.csv'):
         g_connectorRead = psycopg2.connect(
             host='192.168.0.52',
             database="FBWatch",
