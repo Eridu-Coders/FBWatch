@@ -57,9 +57,12 @@ def loginAsScrape(p_user, p_passwd):
             EC.presence_of_element_located((By.XPATH, '//td/input[@id="pass"]')))
 
         l_pwdInput.send_keys(p_passwd)
+        time.sleep(.5)
 
         # loginbutton
-        l_driver.find_element_by_xpath('//label[@id="loginbutton"]/input').click()
+        l_loginButton = WebDriverWait(l_driver, 15).until(
+            EC.presence_of_element_located((By.XPATH, '//label[@id="loginbutton"]/input')))
+        l_loginButton.click()
 
         # wait for mainContainer
         WebDriverWait(l_driver, 15).until(

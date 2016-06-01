@@ -229,7 +229,7 @@ def getMemUsage(p_pid):
 
     return 0.0
 
-def likeOrComment(p_idPost, p_message=''):
+def handleWebDriver():
     global g_browserActions
     global g_browserDriver
 
@@ -242,8 +242,69 @@ def likeOrComment(p_idPost, p_message=''):
         # open a new driver
         g_browserDriver = loginAs(g_phantomId, g_phantomPwd, p_api=False)
 
+def postRiverLink(p_link):
+    global g_browserDriver
+    global g_browserActions
+
+    handleWebDriver()
+
+    # go to my own feed
+    l_url = 'http://www.facebook.com/'
+    if g_verbose: print('get:', l_url)
+    g_browserDriver.get(l_url)
+
+    l_step = 0
+    try:
+        if g_verbose: print('Start waiting for xhpc_message textarea')
+        l_textArea = WebDriverWait(g_browserDriver, 15).until(
+            EC.presence_of_element_located((By.XPATH, '//textarea[@name="xhpc_message"]')))
+
+        # enter link into status text area
+        if g_verbose: print('Found xhpc_message textarea')
+        time.sleep(.5)
+        l_textArea.send_keys(re.sub('\s+', ' ', p_link).strip())
+        if g_verbose: print('Link [{0}] entered'.format(p_link))
+
+        l_step = 1
+        # click submit button
+        l_button = WebDriverWait(g_browserDriver, 15).until(
+            EC.presence_of_element_located((By.XPATH, '//div[@class="_ohf rfloat"]//button[@type="submit"]')))
+        if g_verbose: print('Button Found')
+        l_button.click()
+        time.sleep(.5)
+
+        # _4d6i img
+        l_step = 2
+        if g_verbose: print('Waiting for waiting icon to disappear')
+        WebDriverWait(g_browserDriver, 15).until(
+            EC.presence_of_element_located((By.XPATH, '//img[@class="_4d6i img"]')))
+
+        if g_verbose: print('Link [{0}] posted'.format(p_link))
+        l_retVal = True
+    except EX.TimeoutException:
+        if l_step == 0:
+            print('Did not find xhpc_message textarea')
+        elif l_step == 0:
+            print('Did not find submit button')
+        else:
+            print('Did not find icon')
+        l_retVal = False
+    except EX.WebDriverException as e:
+        print('Unknown WebDriverException -->', e)
+        l_retVal = False
+
+    g_browserActions += 1
+
+    return l_retVal
+
+def likeOrComment(p_idPost, p_message=''):
+    global g_browserDriver
+    global g_browserActions
+
+    handleWebDriver()
+
     l_url = 'http://www.facebook.com/{0}'.format(p_idPost)
-    print('get:', l_url)
+    if g_verbose: print('get:', l_url)
     g_browserDriver.get(l_url)
 
     # ufi_highlighted_comment
@@ -385,7 +446,6 @@ def logOneRiver(p_link, p_phantom):
 
     l_cursor.close()
 
-# def distributeLikes():
 def prepareLikeActions(p_csvWriter, p_phantomId, p_phantomPwd, p_vpn, p_fbId):
     print('+++ Likes Actions +++')
     l_cursor = g_connectorRead.cursor()
@@ -430,7 +490,6 @@ def prepareLikeActions(p_csvWriter, p_phantomId, p_phantomPwd, p_vpn, p_fbId):
 
     l_cursor.close()
 
-#def distributeComments():
 def prepareCommActions(p_csvWriter, p_phantomId, p_phantomPwd, p_vpn, p_fbId):
     print('*** Comments Actions ***')
     l_cursor = g_connectorRead.cursor()
@@ -618,7 +677,7 @@ def choosePhantom():
         subprocess.Popen(['sudo', 'kill', '-15', str(l_process.pid)])
         print('IP:', getOwnIp())
 
-def prepareActions(p_phantomId, p_phantomPwd, p_vpn, p_fbId):
+def prepareActions(p_phantomId, p_phantomPwd, p_vpn, p_fbId, p_noLikes, p_noComments, p_noRivers):
     l_csvFile = 'bp_actions_' + re.sub('\W', '-', p_phantomId) + '.csv'
 
     print('Preparing actions for:', p_phantomId)
@@ -632,9 +691,12 @@ def prepareActions(p_phantomId, p_phantomPwd, p_vpn, p_fbId):
         l_csvWriter.writerow(['ACTION', 'FB_ID', 'DATA0', 'DATA1', 'DATA2', 'DATA3'])
         l_csvWriter.writerow(['LOG-IN', '', p_phantomId, p_phantomPwd, p_vpn, p_fbId])
 
-        prepareLikeActions(l_csvWriter, p_phantomId, p_phantomPwd, p_vpn, p_fbId)
-        prepareCommActions(l_csvWriter, p_phantomId, p_phantomPwd, p_vpn, p_fbId)
-        prepareRiversActions(l_csvWriter, p_phantomId, p_phantomPwd, p_vpn, p_fbId)
+        if not p_noLikes:
+            prepareLikeActions(l_csvWriter, p_phantomId, p_phantomPwd, p_vpn, p_fbId)
+        if not p_noComments:
+            prepareCommActions(l_csvWriter, p_phantomId, p_phantomPwd, p_vpn, p_fbId)
+        if not p_noRivers:
+            prepareRiversActions(l_csvWriter, p_phantomId, p_phantomPwd, p_vpn, p_fbId)
 
 def executeActions():
     # record IP without VPN
@@ -744,7 +806,7 @@ def executeActionFile(p_file):
                     # perform like action
                     if l_action == 'LIKE':
                         print('L <{4:<3}/{5:<3}> [{0:<20}] {1:<30} --> [{2:<40}] {3}'.format(
-                            l_idUser, l_userName, l_objId, l_commTxt, i, l_actionTotalCount))
+                            l_idUser, l_userName, l_objId, l_commTxt, i, l_actionTotalCount-1))
 
                         if likeOrComment(l_objId, p_message=''):
                             l_csvLogWriter.writerow(['L', l_phantomId, l_objId, l_idUser, ''])
@@ -753,7 +815,7 @@ def executeActionFile(p_file):
                     elif l_action == 'COMM':
                         l_newComm = l_row[5]
                         print('K <{4:<3}/{6:<3}> [{0:<20}] {1:<30} --> [{2:<40}] {3} --> {5}'.format(
-                            l_idUser, l_userName, l_objId, l_commTxt, i, l_newComm, l_actionTotalCount))
+                            l_idUser, l_userName, l_objId, l_commTxt, i, l_newComm, l_actionTotalCount-1))
 
                         if likeOrComment(l_objId, p_message=l_newComm):
                             l_csvLogWriter.writerow(['K', l_phantomId, l_objId, l_idUser, l_newComm])
@@ -761,7 +823,10 @@ def executeActionFile(p_file):
                     # perform rivers image action
                     elif l_action == 'RIVER':
                         l_link = l_row[5]
-                        print('R <{0:<3}/{1:<3}> --> {2}'.format(i, l_actionTotalCount, l_link))
+                        print('R <{0:<3}/{1:<3}> --> {2}'.format(i, l_actionTotalCount-1, l_link))
+
+                        if postRiverLink(l_link):
+                            l_csvLogWriter.writerow(['R', l_phantomId, '', '', l_link])
                     else:
                         print('Unknown action:', l_action)
 
@@ -828,6 +893,8 @@ def logActions():
                     logOneLike(l_idUser, l_objId, l_phantomId)
                 elif l_action == 'K':
                     logOneComment(l_idUser, l_objId, l_data, l_phantomId)
+                elif l_action == 'R':
+                    logOneRiver(l_data, l_phantomId)
 
         os.remove(l_logFilePath)
 
@@ -840,7 +907,7 @@ if __name__ == "__main__":
     print('|                                                            |')
     print('| Basic facebook presence                                    |')
     print('|                                                            |')
-    print('| v. 3.0 - 30/05/2016                                        |')
+    print('| v. 3.2 - 01/06/2016                                        |')
     print('+------------------------------------------------------------+')
 
     random.seed()
@@ -853,6 +920,7 @@ if __name__ == "__main__":
     l_parser.add_argument('-q', help='Quiet: less progress info', action='store_true')
     l_parser.add_argument('--NoLikes', help='Do not perform likes distribution', action='store_true')
     l_parser.add_argument('--NoComments', help='Do not perform comments distribution', action='store_true')
+    l_parser.add_argument('--NoRivers', help='Do not perform comments distribution', action='store_true')
     l_parser.add_argument('--Test', help='No VPN and only KA as user', action='store_true')
     l_parser.add_argument('--GenComment', help='Test gen comment', action='store_true')
     l_parser.add_argument('--SshTest', help='Test remote command execution', action='store_true')
@@ -867,6 +935,7 @@ if __name__ == "__main__":
             self.NoLikes = False
             self.NoComments = False
             self.GenComment = False
+            self.NoRivers = False
             self.Test = False
             self.SshTest = False
             self.LOCTest = False
@@ -943,7 +1012,7 @@ if __name__ == "__main__":
                 l_phantomId = l_phantomId.strip()
                 l_phantomPwd = l_phantomPwd.strip()
 
-                prepareActions(l_phantomId, l_phantomPwd, l_vpn, l_fbId)
+                prepareActions(l_phantomId, l_phantomPwd, l_vpn, l_fbId, c.NoLikes, c.NoComments, c.NoRivers)
 
             l_cursor.close()
 
