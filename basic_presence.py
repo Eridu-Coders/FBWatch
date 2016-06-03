@@ -116,8 +116,8 @@ g_connectorRead = None
 g_connectorWrite = None
 
 # number of rows kept by the likes and comment distribution main queries
-G_LIMIT_LIKES = 180                     # But only one in 3 will be actually liked
-G_LIMIT_COMM = 150                      # But only one in 5 will be actually commented
+G_LIMIT_LIKES = 240                     # But only one in 3 will be actually liked
+G_LIMIT_COMM = 100                      # But only one in 10 will be actually commented
 
 g_verbose = True
 
@@ -525,8 +525,8 @@ def prepareCommActions(p_csvWriter, p_phantomId, p_phantomPwd, p_vpn, p_fbId):
     l_cursor.execute(l_query)
 
     for l_idUser, l_userName, l_commId, l_commTxt in l_cursor:
-        # only one in 5 is perfomed
-        if random.randint(0, 4) == 0:
+        # only one in 10 is perfomed
+        if random.randint(0, 9) == 0:
             if len(l_commTxt) > 50:
                 l_commTxt = l_commTxt[0:50] + '...'
 
@@ -557,13 +557,14 @@ def prepareRiversActions(p_csvWriter, p_phantomId, p_phantomPwd, p_vpn, p_fbId):
         p_csvWriter.writerow(['RIVER', '', '', '', '', l_link])
 
 g_commList = [
-    'Indeed', 'Ok', 'That sounds right', 'I agree', '100% agree',
+    'Indeed', 'That sounds so right', 'I agree', '100% agree',
     'Quite right', 'Absolutely right', 'Hell yes', 'Right on the mark', 'Yes indeed',
-    'Yes', 'True', 'So true', 'Yeah', 'Hell Yeah', 'Fuck Yeah', 'Thumbs up man',
+    'Yes', 'My God, Yes', 'True', 'So true', 'Yeah', 'Hell Yeah', 'Fuck Yeah', 'Thumbs up man',
     "Can't say anything against that", "Couldn't agree more",
-    'There is no denying it', 'The Truth always comes out',
+    'There is no denying it', 'The Truth always comes out', "They can't hide"
     "Couldn't have said it better myself", 'You are right', 'You are so right',
-    'Damn right', 'Spot on', 'You are damn right', 'Sure enough']
+    'Damn right', 'Spot on', 'You are damn right', 'Sure enough', 'Well said',
+    "You've hit the nail right on the head", "That's the damn truth"]
 
 g_choiceCommList = None
 

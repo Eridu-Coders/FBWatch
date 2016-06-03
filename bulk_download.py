@@ -30,6 +30,10 @@ g_objectStored = 0                          # number of objects actually stored
 g_postRetrieved = 0
 g_commentRetrieved = 0
 
+# obtain from 'Facebook for Developpers --> Tools & Support --> Access Token Tool --> Debug --> Extend Access Token
+g_LTToken = 'EAAWW0i6eRkUBAB8LbAiz5paFQCT8hdZA1JSlrNZCZCehuDL7lILiZClhHJRT1gqzdPsZCZBJq5MtOv7qBSvZCFpqmZBdo9JyuxtM72NZBspDoYXO82u6h4BJGMcqUyiu4WJtY3jJ7vZBEYiyKsOvUHU8SZAGJQj4DaZBZCxsZD'
+g_LTTokenExpiry = datetime.datetime.strptime('01/08/2016', '%d/%m/%Y')
+g_useLTToken = False
 g_FBToken = None                            # current FB access token
 
 g_user = 'kabir.eridu@gmail.com'            # user name
@@ -394,50 +398,76 @@ def getOptionalField(p_json, p_field):
     return l_value, l_valueShort
 
 def getPages():
-    purgeDnlComm()
+    # purgeDnlComm()
 
-    # list of likes from user --> starting point
-    l_request = 'https://graph.facebook.com/{0}/me/likes?access_token={1}'.format(
-        G_API_VERSION, g_FBToken)
-    l_response = performRequest(l_request)
+    if g_useLTToken:
+        l_cursor = g_connector.cursor()
 
-    #print('l_request:', l_request)
+        l_query = """
+            select
+                "ID", "TX_NAME"
+            from "FBWatch"."TB_OBJ"
+            where
+                "ST_TYPE" = 'Page'
+        """.format(G_DAYS_DEPTH)
+        # print(l_query)
 
-    # each like is a page
-    l_responseData = json.loads(l_response)
-    l_finished = False
-    while not l_finished:
-        for l_liked in l_responseData['data']:
-            l_pageId = l_liked['id']
-            l_pageName = l_liked['name']
-            print('id   :', l_pageId)
-            print('name :', l_pageName)
+        try:
+            l_cursor.execute(l_query)
 
-            # store page information
-            storeObject(
-                p_padding='',
-                p_type='Page',
-                p_FBType='Page',
-                p_id=l_pageId,
-                p_parentId='',
-                p_pageId='',
-                p_postId='',
-                p_date='',
-                p_likeCount=0,
-                p_shareCount=0,
-                p_name=l_pageName
-            )
+            for l_pageId, l_pageName in l_cursor:
+                print('+++ Page:', l_pageName, '+++')
+                getPostsFromPage(l_pageId)
 
-            # get posts from the page
-            getPostsFromPage(l_pageId)
+        except Exception as e:
+            print('Post Update Unknown Exception: {0}'.format(repr(e)))
+            print(l_query)
+            sys.exit()
 
-        if 'paging' in l_responseData.keys() and 'next' in l_responseData['paging'].keys():
-            l_request = l_responseData['paging']['next']
-            l_response = performRequest(l_request)
+        l_cursor.close()
+    else:
+        # list of likes from user --> starting point
+        l_request = 'https://graph.facebook.com/{0}/me/likes?access_token={1}'.format(
+            G_API_VERSION, g_FBToken)
+        l_response = performRequest(l_request)
 
-            l_responseData = json.loads(l_response)
-        else:
-            l_finished = True
+        #print('l_request:', l_request)
+
+        # each like is a page
+        l_responseData = json.loads(l_response)
+        l_finished = False
+        while not l_finished:
+            for l_liked in l_responseData['data']:
+                l_pageId = l_liked['id']
+                l_pageName = l_liked['name']
+                print('id   :', l_pageId)
+                print('name :', l_pageName)
+
+                # store page information
+                storeObject(
+                    p_padding='',
+                    p_type='Page',
+                    p_FBType='Page',
+                    p_id=l_pageId,
+                    p_parentId='',
+                    p_pageId='',
+                    p_postId='',
+                    p_date='',
+                    p_likeCount=0,
+                    p_shareCount=0,
+                    p_name=l_pageName
+                )
+
+                # get posts from the page
+                getPostsFromPage(l_pageId)
+
+            if 'paging' in l_responseData.keys() and 'next' in l_responseData['paging'].keys():
+                l_request = l_responseData['paging']['next']
+                l_response = performRequest(l_request)
+
+                l_responseData = json.loads(l_response)
+            else:
+                l_finished = True
 
 def getPostsFromPage(p_id):
     global g_postRetrieved
@@ -479,6 +509,7 @@ def getPostsFromPage(p_id):
 
             # if message older than G_DAYS_DEPTH days ---> break loop
             if (l_msgDate - datetime.datetime.now()).days > G_DAYS_DEPTH:
+                print('Post too old')
                 l_finished = True
                 break
 
@@ -547,10 +578,11 @@ def getPostsFromPage(p_id):
                     p_raw           =json.dumps(l_post['attachment']) if 'attachment' in l_post.keys() else ''
                 ):
                 # get comments
-                logCommDnl(l_postId, p_id, 'Post', l_name)
+                #logCommDnl(l_postId, p_id, 'Post', l_name)
                 getComments(l_postId, l_postId, p_id, 0)
             else:
                 # if already in DB ---> break loop
+                print('Page Already done today')
                 l_finished = True
                 break
 
@@ -670,7 +702,7 @@ def getComments(p_id, p_postId, p_pageId, p_depth):
 
             # get comments
             if l_commentCCount > 0:
-                logCommDnl(l_commentId, p_id, 'Comm', l_messageShort)
+                #logCommDnl(l_commentId, p_id, 'Comm', l_messageShort)
                 getComments(l_commentId, p_postId, p_pageId, p_depth+1)
 
         if 'paging' in l_responseData.keys() and 'next' in l_responseData['paging'].keys():
@@ -687,7 +719,7 @@ def getComments(p_id, p_postId, p_pageId, p_depth):
 def updatePosts():
     global g_postRetrieved
 
-    purgeDnlComm()
+    # purgeDnlComm()
 
     l_cursor = g_connector.cursor()
 
@@ -763,7 +795,7 @@ def updatePosts():
 
             if updateObject(l_postId, l_shares, l_likeCount, l_name, l_caption, l_description, l_story, l_message)\
                     and l_commentFlag == 'X':
-                logCommDnl(l_postId, l_pageId, 'Post', l_name)
+                #logCommDnl(l_postId, l_pageId, 'Post', l_name)
                 getComments(l_postId, l_postId, l_pageId, 0)
 
     except Exception as e:
@@ -1052,15 +1084,18 @@ def renewTokenAndRequest(p_request):
 def getFBToken():
     global g_FBToken
 
-    l_driver, l_accessToken = loginAs(g_user, g_pass)
-    if l_accessToken is not None:
-        printAndSave('g_FBToken before: {0}\n'.format(g_FBToken))
-        g_FBToken = l_accessToken
-        printAndSave('g_FBToken new   : {0}\n'.format(g_FBToken))
-        l_driver.quit()
+    if g_useLTToken:
+        g_FBToken = g_LTToken
     else:
-        print('Cannot obtain FB Token for:', g_user)
-        sys.exit()
+        l_driver, l_accessToken = loginAs(g_user, g_pass)
+        if l_accessToken is not None:
+            printAndSave('g_FBToken before: {0}\n'.format(g_FBToken))
+            g_FBToken = l_accessToken
+            printAndSave('g_FBToken new   : {0}\n'.format(g_FBToken))
+            l_driver.quit()
+        else:
+            print('Cannot obtain FB Token for:', g_user)
+            sys.exit()
 
 # Calls a "what is my Ip" web service to get own IP
 def getOwnIp():
@@ -1080,7 +1115,7 @@ if __name__ == "__main__":
     print('|                                                            |')
     print('| Bulk facebook download of posts/comments                   |')
     print('|                                                            |')
-    print('| v. 2.4 - 16/05/2016                                        |')
+    print('| v. 2.5 - 02/06/2016                                        |')
     print('| ---> migrated to PostgreSQL                                |')
     print('+------------------------------------------------------------+')
 
@@ -1088,6 +1123,7 @@ if __name__ == "__main__":
     l_parser.add_argument('--NoPages', help='Do not perform primary download', action='store_true')
     l_parser.add_argument('--NoUpdate', help='Do not perform object update', action='store_true')
     l_parser.add_argument('--NoLikes', help='Do not perform likes detail donwload', action='store_true')
+    l_parser.add_argument('--LTToken', help='Use FB long term token', action='store_true')
     l_parser.add_argument('-q', help='Quiet: less progress info', action='store_true')
 
     # dummy class to receive the parsed args
@@ -1096,6 +1132,7 @@ if __name__ == "__main__":
             self.NoPages = False
             self.NoUpdate = False
             self.NoLikes = False
+            self.LTToken = False
             self.q = False
 
     # do the argument parse
@@ -1106,6 +1143,15 @@ if __name__ == "__main__":
     if c.NoPages: print('Will not perform primary download')
     if c.NoUpdate: print('Will not perform object update')
     if c.NoLikes: print('Will not perform likes detail download')
+
+    if c.LTToken:
+        print('Expiry date:', g_LTTokenExpiry.strftime('%A %d %B %Y'))
+        if datetime.datetime.now() >= g_LTTokenExpiry:
+            print('FB LT Token has expired')
+            sys.exit()
+        else:
+            print('Using Facebook Long Term Token:', g_LTToken, sep='\n')
+            g_useLTToken = True
 
     if c.q:
         g_verbose = False
@@ -1130,13 +1176,16 @@ if __name__ == "__main__":
 
     # get all post/comments from the liked pages of the queried user
     if not c.NoPages:
+        print('*** GET PAGES')
         getPages()
 
     # refresh posts not older than 8 days and not already updated in the past day
     if not c.NoUpdate:
+        print('*** GET UPDATES')
         updatePosts()
 
     if not c.NoLikes:
+        print('*** GET LIKES')
         getLikesDetail()
 
     g_connector.close()

@@ -12,8 +12,11 @@
 <body>
 <script>
     window.fbAsyncInit = function() {
+        console.log('Calling FB.init');
+
         FB.init({
-            appId      : '562146113967762',
+            //appId      : '1573204352976453',  // EriduII
+            appId      : '562146113967762',     // Eridu
             cookie     : true,  // enable cookies to allow the server to access the session
             xfbml      : true,  // parse social plugins on this page
             version    : 'v2.6' // use graph api version 2.5
@@ -31,6 +34,7 @@
         //
         // These three cases are handled in the callback function.
 
+        console.log('Calling FB.getLoginStatus');
         FB.getLoginStatus(function(response) {
             statusChangeCallback(response);
         });
