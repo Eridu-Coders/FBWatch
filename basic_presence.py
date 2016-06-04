@@ -116,8 +116,10 @@ g_connectorRead = None
 g_connectorWrite = None
 
 # number of rows kept by the likes and comment distribution main queries
+G_MAX_FR_PER_DAY = 4
 G_LIMIT_LIKES = 240                     # But only one in 3 will be actually liked
 G_LIMIT_COMM = 100                      # But only one in 10 will be actually commented
+G_LIMIT_FRIEND = 50                     # But only G_MAX_FR_PER_DAY friend requests will be sent
 
 g_verbose = True
 
@@ -241,6 +243,40 @@ def handleWebDriver():
         if g_verbose: print('Opening Selenium Firefox driver and log in')
         # open a new driver
         g_browserDriver = loginAs(g_phantomId, g_phantomPwd, p_api=False)
+
+def friendRequest(p_uId):
+    global g_browserDriver
+    global g_browserActions
+
+    handleWebDriver()
+
+    # go to user's page
+    l_url = 'http://www.facebook.com/{0}'.format(p_uId)
+    if g_verbose: print('get:', l_url)
+    g_browserDriver.get(l_url)
+
+    try:
+        if g_verbose: print('Start waiting for friend request button')
+        l_friendButton = WebDriverWait(g_browserDriver, 15).until(
+            EC.presence_of_element_located((By.XPATH, '//div[@id="u_ps_0_0_0"]//div[@class="FriendButton"]')))
+
+        # enter link into status text area
+        if g_verbose: print('Found friend request button')
+        time.sleep(.5)
+
+        l_friendButton.click()
+
+        l_retVal = True
+    except EX.TimeoutException:
+        print('Did not find friend request button')
+        l_retVal = False
+    except EX.WebDriverException as e:
+        print('Unknown WebDriverException -->', e)
+        l_retVal = False
+
+    g_browserActions += 1
+
+    return l_retVal
 
 def postRiverLink(p_link):
     global g_browserDriver
@@ -399,6 +435,7 @@ def logOneLike(p_userId, p_objId, p_phantom):
         g_connectorWrite.commit()
     except psycopg2.IntegrityError as e:
         print('WARNING: cannot insert into TB_PRESENCE_LIKE')
+        print('l_query:', l_query)
         print('PostgreSQL: {0}'.format(e))
         g_connectorWrite.rollback()
 
@@ -420,6 +457,7 @@ def logOneComment(p_userId, p_objId, p_comm, p_phantom):
         g_connectorWrite.commit()
     except psycopg2.IntegrityError as e:
         print('WARNING: cannot insert into TB_PRESENCE_COMM')
+        print('l_query:', l_query)
         print('PostgreSQL: {0}'.format(e))
         g_connectorWrite.rollback()
 
@@ -441,6 +479,28 @@ def logOneRiver(p_link, p_phantom):
         g_connectorWrite.commit()
     except psycopg2.IntegrityError as e:
         print('WARNING: cannot insert into TB_PRESENCE_RIVERS')
+        print('l_query:', l_query)
+        print('PostgreSQL: {0}'.format(e))
+        g_connectorWrite.rollback()
+
+    l_cursor.close()
+
+def logOneFriendRequest(p_uId, p_phantom, p_failed=False):
+    print('Logging Friend Request:', p_uId, p_phantom)
+    l_cursor = g_connectorWrite.cursor()
+
+    l_query = """
+        INSERT INTO "FBWatch"."TB_PRESENCE_FRIEND"("ID_USER", "DT_FRIEND", "ID_PHANTOM", "F_FAIL")
+        VALUES( '{0}', CURRENT_TIMESTAMP, '{1}', '{2}' )
+    """.format(p_uId, p_phantom, 'X' if p_failed else '')
+
+    # print(l_query)
+    try:
+        l_cursor.execute(l_query)
+        g_connectorWrite.commit()
+    except psycopg2.IntegrityError as e:
+        print('WARNING: cannot insert into TB_PRESENCE_FRIEND')
+        print('l_query:', l_query)
         print('PostgreSQL: {0}'.format(e))
         g_connectorWrite.rollback()
 
@@ -534,6 +594,74 @@ def prepareCommActions(p_csvWriter, p_phantomId, p_phantomPwd, p_vpn, p_fbId):
 
     l_cursor.close()
 
+def prepareFriendActions(p_csvWriter, p_phantomId, p_phantomPwd, p_vpn, p_fbId):
+    print('### Friend Request Actions ###')
+
+    # check that the max number of FR has not already been sent
+    l_cursor = g_connectorRead.cursor()
+
+    l_dayFRCount = 0
+    l_query = """
+        select
+            "ID_PHANTOM"
+            , to_char("DT_FRIEND", 'YYYY-MM-DD') as "DAY"
+            , count(1) as "COUNT"
+        from "FBWatch"."TB_PRESENCE_FRIEND"
+        where
+            to_char("DT_FRIEND", 'YYYY-MM-DD') = to_char(current_timestamp, 'YYYY-MM-DD')
+            and "ID_PHANTOM" = '{0}'
+        group by
+            "ID_PHANTOM"
+            , to_char("DT_FRIEND", 'YYYY-MM-DD')
+        order by to_char("DT_FRIEND", 'YYYY-MM-DD') desc
+    """.format(p_phantomId)
+    # print(l_query)
+    l_cursor.execute(l_query)
+
+    for l_idPhantom, l_day, l_count in l_cursor:
+        l_dayFRCount = l_count
+        if l_count >= G_MAX_FR_PER_DAY:
+            l_cursor.close()
+            return
+
+    l_cursor.close()
+
+    # prepare FR actions
+    l_cursor = g_connectorRead.cursor()
+    l_query = """
+        select "L"."ID_USER"
+            , "U"."ST_NAME"
+            , "U"."TTCOUNT"
+            , count(1) as "COUNT_LIKES"
+        from
+            "FBWatch"."TB_PRESENCE_LIKE" "L"
+            join "FBWatch"."TB_USER_AGGREGATE" "U" on "U"."ID" = "L"."ID_USER"
+            join "FBWatch"."TB_PHANTOM" "P" on "P"."ID_PHANTOM" = "L"."ID_PHANTOM"
+            left outer join "FBWatch"."TB_OBJ" "O" on "O"."ID" = "U"."ID"
+            left outer join "FBWatch"."TB_PRESENCE_FRIEND" "F" on "F"."ID_USER" = "U"."ID" and "F"."ID_PHANTOM" = "P"."ID_PHANTOM"
+        where
+            "O"."ID" is null -- Eliminates users which are actually pages
+            and "F"."ID_USER" is null -- Eliminates users which have already received a request
+            and "L"."ID_PHANTOM" = '{0}'
+        group by
+            "L"."ID_USER"
+            , "U"."ST_NAME"
+            , "U"."TTCOUNT"
+        having
+            count(1) >= 5
+        order by count(1) desc, "U"."TTCOUNT" desc
+        limit {1}
+    """.format(p_phantomId, G_LIMIT_FRIEND)
+    #print(l_query)
+    l_cursor.execute(l_query)
+
+    for l_idUser, l_userName, l_ttCount, l_countLikes in l_cursor:
+        p_csvWriter.writerow(
+            ['FRIEND', '', l_idUser, '{0} (TTCOUNT = {1} / Likes = {2})'.format(
+                l_userName, l_ttCount, l_countLikes), '', '{0}'.format(l_dayFRCount)])
+
+    l_cursor.close()
+
 #def genRiversLink():
 def prepareRiversActions(p_csvWriter, p_phantomId, p_phantomPwd, p_vpn, p_fbId):
     print('--- Rivers Collective Image Actions ---')
@@ -561,7 +689,7 @@ g_commList = [
     'Quite right', 'Absolutely right', 'Hell yes', 'Right on the mark', 'Yes indeed',
     'Yes', 'My God, Yes', 'True', 'So true', 'Yeah', 'Hell Yeah', 'Fuck Yeah', 'Thumbs up man',
     "Can't say anything against that", "Couldn't agree more",
-    'There is no denying it', 'The Truth always comes out', "They can't hide"
+    'There is no denying it', 'The Truth always comes out', "They can't hide",
     "Couldn't have said it better myself", 'You are right', 'You are so right',
     'Damn right', 'Spot on', 'You are damn right', 'Sure enough', 'Well said',
     "You've hit the nail right on the head", "That's the damn truth"]
@@ -678,7 +806,7 @@ def choosePhantom():
         subprocess.Popen(['sudo', 'kill', '-15', str(l_process.pid)])
         print('IP:', getOwnIp())
 
-def prepareActions(p_phantomId, p_phantomPwd, p_vpn, p_fbId, p_noLikes, p_noComments, p_noRivers):
+def prepareActions(p_phantomId, p_phantomPwd, p_vpn, p_fbId, p_noLikes, p_noComments, p_noRivers, p_noFirends):
     l_csvFile = 'bp_actions_' + re.sub('\W', '-', p_phantomId) + '.csv'
 
     print('Preparing actions for:', p_phantomId)
@@ -698,6 +826,8 @@ def prepareActions(p_phantomId, p_phantomPwd, p_vpn, p_fbId, p_noLikes, p_noComm
             prepareCommActions(l_csvWriter, p_phantomId, p_phantomPwd, p_vpn, p_fbId)
         if not p_noRivers:
             prepareRiversActions(l_csvWriter, p_phantomId, p_phantomPwd, p_vpn, p_fbId)
+        if not p_noFirends:
+            prepareFriendActions(l_csvWriter, p_phantomId, p_phantomPwd, p_vpn, p_fbId)
 
 def executeActions():
     # record IP without VPN
@@ -743,6 +873,7 @@ def executeActionFile(p_file):
         l_logFilePath = re.sub('bp_actions_', 'bp_log_', p_file)
         l_logExists = os.path.isfile(l_logFilePath)
 
+        l_friendRequesCount = 0
         with open(l_logFilePath, 'a') as l_logFile:
             l_csvLogWriter = csv.writer(l_logFile,
                 delimiter=';',
@@ -796,6 +927,7 @@ def executeActionFile(p_file):
                 l_actionTotalCount = len(l_rowList)
                 # execute actions at random
                 for i in range(l_actionTotalCount):
+                    l_noWait = False
                     l_row = random.choice(l_rowList)
 
                     l_action = l_row[0]
@@ -828,6 +960,33 @@ def executeActionFile(p_file):
 
                         if postRiverLink(l_link):
                             l_csvLogWriter.writerow(['R', l_phantomId, '', '', l_link])
+
+                    # perform friend request action
+                    elif l_action == 'FRIEND':
+                        try:
+                            l_dayFRCount = int(l_row[5])
+                        except:
+                            l_dayFRCount = 0
+
+                        if l_friendRequesCount == 0 and l_dayFRCount > 0:
+                            l_friendRequesCount = l_dayFRCount
+
+                        if l_friendRequesCount < G_MAX_FR_PER_DAY:
+                            print('F <{0:<3}/{1:<3}> [{2}] --> {3}'.format(
+                                i, l_actionTotalCount-1, l_friendRequesCount, l_userName))
+
+                            if friendRequest(l_idUser):
+                                l_friendRequesCount += 1
+                                l_csvLogWriter.writerow(['F', l_phantomId, '', l_idUser, l_userName])
+                            else:
+                                # failed friend request attempt (no FR button, most of the time)
+                                l_csvLogWriter.writerow(['X', l_phantomId, '', l_idUser, l_userName])
+                        else:
+                            print('F <{0:<3}/{1:<3}> --> {2} SKIPPING'.format(
+                                i, l_actionTotalCount-1, l_userName))
+                            # if max number of FR reached, no need to wait
+                            l_noWait = True
+
                     else:
                         print('Unknown action:', l_action)
 
@@ -852,7 +1011,8 @@ def executeActionFile(p_file):
                                 l_csvWriter.writerow(r)
 
                         # wait
-                        randomWait(G_WAIT_FB_MIN, G_WAIT_FB_MAX)
+                        if not l_noWait:
+                            randomWait(G_WAIT_FB_MIN, G_WAIT_FB_MAX)
                     else:
                         # delete action file if no more actions
                         os.remove(p_file)
@@ -896,6 +1056,11 @@ def logActions():
                     logOneComment(l_idUser, l_objId, l_data, l_phantomId)
                 elif l_action == 'R':
                     logOneRiver(l_data, l_phantomId)
+                elif l_action == 'F':
+                    logOneFriendRequest(l_idUser, l_phantomId)
+                elif l_action == 'X':
+                    # failed friend request attempt (no FR button, most of the time)
+                    logOneFriendRequest(l_idUser, l_phantomId, p_failed=True)
 
         os.remove(l_logFilePath)
 
@@ -908,7 +1073,7 @@ if __name__ == "__main__":
     print('|                                                            |')
     print('| Basic facebook presence                                    |')
     print('|                                                            |')
-    print('| v. 3.2 - 01/06/2016                                        |')
+    print('| v. 3.3 - 04/06/2016                                        |')
     print('+------------------------------------------------------------+')
 
     random.seed()
@@ -919,14 +1084,16 @@ if __name__ == "__main__":
     l_parser = argparse.ArgumentParser(description='Download FB data.')
     l_parser.add_argument('-l', help='List phantoms and login as one', action='store_true')
     l_parser.add_argument('-q', help='Quiet: less progress info', action='store_true')
-    l_parser.add_argument('--NoLikes', help='Do not perform likes distribution', action='store_true')
-    l_parser.add_argument('--NoComments', help='Do not perform comments distribution', action='store_true')
-    l_parser.add_argument('--NoRivers', help='Do not perform comments distribution', action='store_true')
+    l_parser.add_argument('--NoLikes', help='Do not perform likes actions', action='store_true')
+    l_parser.add_argument('--NoComments', help='Do not perform comments actions', action='store_true')
+    l_parser.add_argument('--NoRivers', help='Do not perform rivers images actions', action='store_true')
+    l_parser.add_argument('--NoFriends', help='Do not perform frend request actions', action='store_true')
     l_parser.add_argument('--Test', help='No VPN and only KA as user', action='store_true')
     l_parser.add_argument('--GenComment', help='Test gen comment', action='store_true')
     l_parser.add_argument('--SshTest', help='Test remote command execution', action='store_true')
     l_parser.add_argument('--LOCTest', help='Test likeOrComment', action='store_true')
     l_parser.add_argument('--TestMonitor', help='Test memory monitoring', action='store_true')
+    l_parser.add_argument('--TestFriend', help='Test sending friend request', action='store_true')
 
     # dummy class to receive the parsed args
     class C:
@@ -937,10 +1104,12 @@ if __name__ == "__main__":
             self.NoComments = False
             self.GenComment = False
             self.NoRivers = False
+            self.NoFriends = False
             self.Test = False
             self.SshTest = False
             self.LOCTest = False
             self.TestMonitor = False
+            self.TestFriend = False
 
     # do the argument parse
     c = C()
@@ -964,8 +1133,14 @@ if __name__ == "__main__":
             print(i, genComment())
         sys.exit()
 
+    if c.TestFriend:
+        g_phantomId = 'kabir.abdulhami@gmail.com'
+        g_phantomPwd = '12Alhamdulillah'
+        friendRequest("1000012423386570")
+        sys.exit()
+
     if c.LOCTest:
-        g_phantomId = 'kabir.eridu@gmail.com'
+        g_phantomId = 'kabir.abdulhami@gmail.com'
         g_phantomPwd = '12Alhamdulillah'
         likeOrComment('10154315425328690_10154326253248690', 'Well ?')
         likeOrComment('10154315425328690_10154326253248690', 'Are you really sure ?')
@@ -998,7 +1173,8 @@ if __name__ == "__main__":
             password="murugan!")
 
         if c.Test:
-            prepareActions('kabir.eridu@gmail.com', '12Alhamdulillah', '', '')
+            prepareActions('kabir.abdulhami@gmail.com', '12Alhamdulillah', '', '',
+                           c.NoLikes, c.NoComments, c.NoRivers, c.NoFriends)
         else:
             l_cursor = g_connectorRead.cursor()
 
@@ -1013,7 +1189,8 @@ if __name__ == "__main__":
                 l_phantomId = l_phantomId.strip()
                 l_phantomPwd = l_phantomPwd.strip()
 
-                prepareActions(l_phantomId, l_phantomPwd, l_vpn, l_fbId, c.NoLikes, c.NoComments, c.NoRivers)
+                prepareActions(l_phantomId, l_phantomPwd, l_vpn, l_fbId,
+                               c.NoLikes, c.NoComments, c.NoRivers, c.NoFriends)
 
             l_cursor.close()
 
