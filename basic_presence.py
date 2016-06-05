@@ -117,7 +117,7 @@ g_connectorWrite = None
 
 # number of rows kept by the likes and comment distribution main queries
 G_MAX_FR_PER_DAY = 4
-G_LIMIT_LIKES = 240                     # But only one in 3 will be actually liked
+G_LIMIT_LIKES = 300                     # But only one in 3 will be actually liked
 G_LIMIT_COMM = 100                      # But only one in 10 will be actually commented
 G_LIMIT_FRIEND = 50                     # But only G_MAX_FR_PER_DAY friend requests will be sent
 
@@ -610,6 +610,7 @@ def prepareFriendActions(p_csvWriter, p_phantomId, p_phantomPwd, p_vpn, p_fbId):
         where
             to_char("DT_FRIEND", 'YYYY-MM-DD') = to_char(current_timestamp, 'YYYY-MM-DD')
             and "ID_PHANTOM" = '{0}'
+            and "F_FAIL" <> 'X'
         group by
             "ID_PHANTOM"
             , to_char("DT_FRIEND", 'YYYY-MM-DD')
@@ -1008,6 +1009,14 @@ def executeActionFile(p_file):
                             l_csvWriter.writerow(['LOG-IN', '', l_phantomId, l_phantomPwd, l_vpn, l_fbId])
 
                             for r in l_rowList:
+                                if r[0] == 'FRIEND':
+                                    if l_friendRequesCount < G_MAX_FR_PER_DAY:
+                                        # store the current FR count value
+                                        r[5] = '{0}'.format(l_friendRequesCount)
+                                    else:
+                                        # if already beyond max value, do not bother saving FR records
+                                        continue
+                                        
                                 l_csvWriter.writerow(r)
 
                         # wait
