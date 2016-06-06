@@ -99,6 +99,28 @@ def updateThemes():
 
     l_cursor.close()
 
+def performQuery(p_query, p_record=None, p_verbose=True):
+    l_cursor = g_connectorWrite.cursor()
+
+    try:
+        if p_record is None:
+            l_cursor.execute(p_query)
+        else:
+            l_cursor.execute(p_query, p_record)
+        g_connectorWrite.commit()
+    except psycopg2.IntegrityError as e:
+        if p_verbose:
+            print('WARNING: Could not fully execute:\n', p_query)
+            print('PostgreSQL: {0}'.format(e))
+        g_connectorWrite.rollback()
+    except Exception as e:
+        print('PG Unknown Exception: {0}'.format(repr(e)))
+        print('Query  :', p_query)
+        print('Record :', p_record)
+        sys.exit()
+
+    l_cursor.close()
+
 # ---------------------------------------------------- Main ------------------------------------------------------------
 if __name__ == "__main__":
     print('+------------------------------------------------------------+')
@@ -106,7 +128,7 @@ if __name__ == "__main__":
     print('|                                                            |')
     print('| updates post ---> themes table                             |')
     print('|                                                            |')
-    print('| v. 2.1 - 05/05/2016                                        |')
+    print('| v. 2.2 - 06/06/2016                                        |')
     print('| --> migrated to PostgreSQL                                 |')
     print('+------------------------------------------------------------+')
 
@@ -124,3 +146,68 @@ if __name__ == "__main__":
         password="murugan!")
 
     updateThemes()
+
+    print('*** Rebuilding TB_USER_AGGREGATE')
+
+    print('Emptying TB_USER_AGGREGATE')
+    l_query = 'delete from "FBWatch"."TB_USER_AGGREGATE";'
+    performQuery(l_query)
+
+    print('Copying V_USER_UNIQUE into TB_USER_AGGREGATE')
+    l_query = """
+        insert into "FBWatch"."TB_USER_AGGREGATE"
+        select *, 0, 0, 0, 0, 0 from "FBWatch"."V_USER_UNIQUE";
+    """
+    performQuery(l_query)
+
+    print('Calculating comment totals')
+    l_query = """
+        update "FBWatch"."TB_USER_AGGREGATE" as "U"
+        set
+            "AUTHCOUNT" = "O"."AUTHCOUNT",
+            "PGCOUNT" = "O"."PGCOUNT"
+         from (
+                select
+                    "ID_USER"
+                    , count(1) as "AUTHCOUNT"
+                    , count(DISTINCT "ID_PAGE") as "PGCOUNT"
+                from "FBWatch"."TB_OBJ"
+                group by "ID_USER"
+            ) as "O"
+        where "U"."ID" = "O"."ID_USER";
+    """
+    performQuery(l_query)
+
+    print('Calculating like totals')
+    l_query = """
+        update "FBWatch"."TB_USER_AGGREGATE" as "U"
+        set
+            "LIKECOUNT" = "O"."LIKECOUNT",
+            "PGLKCOUNT" = "O"."PGLKCOUNT"
+        from(
+                select
+                    "R"."ID" as "ID_USER"
+                    , count(distinct "J"."ID") as "LIKECOUNT"
+                    , count(DISTINCT "J"."ID_PAGE") as "PGLKCOUNT"
+                from
+                    "FBWatch"."TB_OBJ" as "J" join "FBWatch"."TB_LIKE" as "L" on "J"."ID_INTERNAL" = "L"."ID_OBJ_INTERNAL"
+                    join "FBWatch"."TB_USER" as "R" on "R"."ID_INTERNAL" = "L"."ID_USER_INTERNAL"
+                group by "R"."ID"
+        ) as "O"
+        where "U"."ID" = "O"."ID_USER";
+    """
+    performQuery(l_query)
+
+    print('Calculating TTCOUNT')
+    l_query = """
+        update "FBWatch"."TB_USER_AGGREGATE"
+        set "TTCOUNT" = "LIKECOUNT" + "AUTHCOUNT";
+    """
+    performQuery(l_query)
+    
+    print('Removing users with less than 10 activity')
+    l_query = """
+        delete from "FBWatch"."TB_USER_AGGREGATE"
+        where "TTCOUNT" < 10;
+    """
+    performQuery(l_query)

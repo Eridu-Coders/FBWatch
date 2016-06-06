@@ -116,7 +116,8 @@ g_connectorRead = None
 g_connectorWrite = None
 
 # number of rows kept by the likes and comment distribution main queries
-G_MAX_FR_PER_DAY = 4
+G_MIN_LIKES_FR = 4
+G_MAX_FR_PER_DAY = 3
 G_LIMIT_LIKES = 300                     # But only one in 3 will be actually liked
 G_LIMIT_COMM = 100                      # But only one in 10 will be actually commented
 G_LIMIT_FRIEND = 50                     # But only G_MAX_FR_PER_DAY friend requests will be sent
@@ -524,7 +525,8 @@ def prepareLikeActions(p_csvWriter, p_phantomId, p_phantomPwd, p_vpn, p_fbId):
                     ,"U"."TTCOUNT"
                     , max("J"."DT_CRE") "DLATEST"
                 from
-                    "FBWatch"."TB_USER_AGGREGATE" "U" join "FBWatch"."TB_OBJ" "J" on "J"."ID_USER" = "U"."ID"
+                    "FBWatch"."TB_USER_AGGREGATE" "U"
+                    join "FBWatch"."TB_OBJ" "J" on "J"."ID_USER" = "U"."ID"
                 where
                     "U"."AUTHCOUNT" > 10
                     and "J"."ST_FB_TYPE" = 'Comment'
@@ -649,10 +651,10 @@ def prepareFriendActions(p_csvWriter, p_phantomId, p_phantomPwd, p_vpn, p_fbId):
             , "U"."ST_NAME"
             , "U"."TTCOUNT"
         having
-            count(1) >= 5
+            count(1) >= {1}
         order by count(1) desc, "U"."TTCOUNT" desc
-        limit {1}
-    """.format(p_phantomId, G_LIMIT_FRIEND)
+        limit {2}
+    """.format(p_phantomId, G_MIN_LIKES_FR, G_LIMIT_FRIEND)
     #print(l_query)
     l_cursor.execute(l_query)
 
@@ -944,6 +946,8 @@ def executeActionFile(p_file):
 
                         if likeOrComment(l_objId, p_message=''):
                             l_csvLogWriter.writerow(['L', l_phantomId, l_objId, l_idUser, ''])
+                        else:
+                            l_noWait = True
 
                     # perform comment action
                     elif l_action == 'COMM':
@@ -953,6 +957,8 @@ def executeActionFile(p_file):
 
                         if likeOrComment(l_objId, p_message=l_newComm):
                             l_csvLogWriter.writerow(['K', l_phantomId, l_objId, l_idUser, l_newComm])
+                        else:
+                            l_noWait = True
 
                     # perform rivers image action
                     elif l_action == 'RIVER':
@@ -1082,7 +1088,7 @@ if __name__ == "__main__":
     print('|                                                            |')
     print('| Basic facebook presence                                    |')
     print('|                                                            |')
-    print('| v. 3.3 - 04/06/2016                                        |')
+    print('| v. 3.4 - 06/06/2016                                        |')
     print('+------------------------------------------------------------+')
 
     random.seed()
