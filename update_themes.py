@@ -204,7 +204,7 @@ if __name__ == "__main__":
         set "TTCOUNT" = "LIKECOUNT" + "AUTHCOUNT";
     """
     performQuery(l_query)
-    
+
     print('Removing users with less than 10 activity')
     l_query = """
         delete from "FBWatch"."TB_USER_AGGREGATE"

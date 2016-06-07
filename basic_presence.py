@@ -918,120 +918,124 @@ def executeActionFile(p_file):
                     l_rowList += [l_row]
 
             l_actionFile.close()
+            l_actionTotalCount = len(l_rowList)
 
-            # turn on vpn
-            if l_vpn is not None:
-                print('Starting vpn')
-                l_vpnProcess = switchonVpn(l_vpn, p_verbose=True)
-
-            if l_vpnProcess is None:
-                print('No VPN --> ABORTING ...')
+            if l_actionTotalCount == 0:
+                # no actions --> remove file
+                os.remove(p_file)
             else:
-                l_actionTotalCount = len(l_rowList)
-                # execute actions at random
-                for i in range(l_actionTotalCount):
-                    l_noWait = False
-                    l_row = random.choice(l_rowList)
+                # turn on vpn
+                if l_vpn is not None:
+                    print('Starting vpn')
+                    l_vpnProcess = switchonVpn(l_vpn, p_verbose=True)
 
-                    l_action = l_row[0]
-                    l_objId = l_row[1]
-                    l_idUser = l_row[2]
-                    l_userName = l_row[3]
-                    l_commTxt = l_row[4]
+                if l_vpnProcess is None:
+                    print('No VPN --> ABORTING ...')
+                else:
+                    # execute actions at random
+                    for i in range(l_actionTotalCount):
+                        l_noWait = False
+                        l_row = random.choice(l_rowList)
 
-                    # perform like action
-                    if l_action == 'LIKE':
-                        print('L <{4:<3}/{5:<3}> [{0:<20}] {1:<30} --> [{2:<40}] {3}'.format(
-                            l_idUser, l_userName, l_objId, l_commTxt, i, l_actionTotalCount-1))
+                        l_action = l_row[0]
+                        l_objId = l_row[1]
+                        l_idUser = l_row[2]
+                        l_userName = l_row[3]
+                        l_commTxt = l_row[4]
 
-                        if likeOrComment(l_objId, p_message=''):
-                            l_csvLogWriter.writerow(['L', l_phantomId, l_objId, l_idUser, ''])
-                        else:
-                            l_noWait = True
+                        # perform like action
+                        if l_action == 'LIKE':
+                            print('L <{4:<3}/{5:<3}> [{0:<20}] {1:<30} --> [{2:<40}] {3}'.format(
+                                l_idUser, l_userName, l_objId, l_commTxt, i, l_actionTotalCount-1))
 
-                    # perform comment action
-                    elif l_action == 'COMM':
-                        l_newComm = l_row[5]
-                        print('K <{4:<3}/{6:<3}> [{0:<20}] {1:<30} --> [{2:<40}] {3} --> {5}'.format(
-                            l_idUser, l_userName, l_objId, l_commTxt, i, l_newComm, l_actionTotalCount-1))
-
-                        if likeOrComment(l_objId, p_message=l_newComm):
-                            l_csvLogWriter.writerow(['K', l_phantomId, l_objId, l_idUser, l_newComm])
-                        else:
-                            l_noWait = True
-
-                    # perform rivers image action
-                    elif l_action == 'RIVER':
-                        l_link = l_row[5]
-                        print('R <{0:<3}/{1:<3}> --> {2}'.format(i, l_actionTotalCount-1, l_link))
-
-                        if postRiverLink(l_link):
-                            l_csvLogWriter.writerow(['R', l_phantomId, '', '', l_link])
-
-                    # perform friend request action
-                    elif l_action == 'FRIEND':
-                        try:
-                            l_dayFRCount = int(l_row[5])
-                        except:
-                            l_dayFRCount = 0
-
-                        if l_friendRequesCount == 0 and l_dayFRCount > 0:
-                            l_friendRequesCount = l_dayFRCount
-
-                        if l_friendRequesCount < G_MAX_FR_PER_DAY:
-                            print('F <{0:<3}/{1:<3}> [{2}] --> {3}'.format(
-                                i, l_actionTotalCount-1, l_friendRequesCount, l_userName))
-
-                            if friendRequest(l_idUser):
-                                l_friendRequesCount += 1
-                                l_csvLogWriter.writerow(['F', l_phantomId, '', l_idUser, l_userName])
+                            if likeOrComment(l_objId, p_message=''):
+                                l_csvLogWriter.writerow(['L', l_phantomId, l_objId, l_idUser, ''])
                             else:
-                                # failed friend request attempt (no FR button, most of the time)
-                                l_csvLogWriter.writerow(['X', l_phantomId, '', l_idUser, l_userName])
+                                l_noWait = True
+
+                        # perform comment action
+                        elif l_action == 'COMM':
+                            l_newComm = l_row[5]
+                            print('K <{4:<3}/{6:<3}> [{0:<20}] {1:<30} --> [{2:<40}] {3} --> {5}'.format(
+                                l_idUser, l_userName, l_objId, l_commTxt, i, l_newComm, l_actionTotalCount-1))
+
+                            if likeOrComment(l_objId, p_message=l_newComm):
+                                l_csvLogWriter.writerow(['K', l_phantomId, l_objId, l_idUser, l_newComm])
+                            else:
+                                l_noWait = True
+
+                        # perform rivers image action
+                        elif l_action == 'RIVER':
+                            l_link = l_row[5]
+                            print('R <{0:<3}/{1:<3}> --> {2}'.format(i, l_actionTotalCount-1, l_link))
+
+                            if postRiverLink(l_link):
+                                l_csvLogWriter.writerow(['R', l_phantomId, '', '', l_link])
+
+                        # perform friend request action
+                        elif l_action == 'FRIEND':
+                            try:
+                                l_dayFRCount = int(l_row[5])
+                            except:
+                                l_dayFRCount = 0
+
+                            if l_friendRequesCount == 0 and l_dayFRCount > 0:
+                                l_friendRequesCount = l_dayFRCount
+
+                            if l_friendRequesCount < G_MAX_FR_PER_DAY:
+                                print('F <{0:<3}/{1:<3}> [{2}] --> {3}'.format(
+                                    i, l_actionTotalCount-1, l_friendRequesCount, l_userName))
+
+                                if friendRequest(l_idUser):
+                                    l_friendRequesCount += 1
+                                    l_csvLogWriter.writerow(['F', l_phantomId, '', l_idUser, l_userName])
+                                else:
+                                    # failed friend request attempt (no FR button, most of the time)
+                                    l_csvLogWriter.writerow(['X', l_phantomId, '', l_idUser, l_userName])
+                            else:
+                                print('F <{0:<3}/{1:<3}> --> {2} SKIPPING'.format(
+                                    i, l_actionTotalCount-1, l_userName))
+                                # if max number of FR reached, no need to wait
+                                l_noWait = True
+
                         else:
-                            print('F <{0:<3}/{1:<3}> --> {2} SKIPPING'.format(
-                                i, l_actionTotalCount-1, l_userName))
-                            # if max number of FR reached, no need to wait
-                            l_noWait = True
+                            print('Unknown action:', l_action)
 
-                    else:
-                        print('Unknown action:', l_action)
+                        l_logFile.flush()
 
-                    l_logFile.flush()
+                        # remove the row just executed from the list
+                        l_rowList.remove(l_row)
 
-                    # remove the row just executed from the list
-                    l_rowList.remove(l_row)
+                        # write back remaining rows to file, to be able to execute them after resuming post crash
+                        if len(l_rowList):
+                            with open(p_file, 'w') as l_fOut:
+                                l_csvWriter = csv.writer(l_fOut,
+                                                         delimiter=';',
+                                                         quotechar='"',
+                                                         lineterminator='\n',
+                                                         quoting=csv.QUOTE_NONNUMERIC)
 
-                    # write back remaining rows to file, to be able to execute them after resuming post crash
-                    if len(l_rowList):
-                        with open(p_file, 'w') as l_fOut:
-                            l_csvWriter = csv.writer(l_fOut,
-                                                     delimiter=';',
-                                                     quotechar='"',
-                                                     lineterminator='\n',
-                                                     quoting=csv.QUOTE_NONNUMERIC)
+                                l_csvWriter.writerow(['ACTION', 'FB_ID', 'DATA0', 'DATA1', 'DATA2', 'DATA3'])
+                                l_csvWriter.writerow(['LOG-IN', '', l_phantomId, l_phantomPwd, l_vpn, l_fbId])
 
-                            l_csvWriter.writerow(['ACTION', 'FB_ID', 'DATA0', 'DATA1', 'DATA2', 'DATA3'])
-                            l_csvWriter.writerow(['LOG-IN', '', l_phantomId, l_phantomPwd, l_vpn, l_fbId])
+                                for r in l_rowList:
+                                    if r[0] == 'FRIEND':
+                                        if l_friendRequesCount < G_MAX_FR_PER_DAY:
+                                            # store the current FR count value
+                                            r[5] = '{0}'.format(l_friendRequesCount)
+                                        else:
+                                            # if already beyond max value, do not bother saving FR records
+                                            continue
 
-                            for r in l_rowList:
-                                if r[0] == 'FRIEND':
-                                    if l_friendRequesCount < G_MAX_FR_PER_DAY:
-                                        # store the current FR count value
-                                        r[5] = '{0}'.format(l_friendRequesCount)
-                                    else:
-                                        # if already beyond max value, do not bother saving FR records
-                                        continue
-                                        
-                                l_csvWriter.writerow(r)
+                                    l_csvWriter.writerow(r)
 
-                        # wait
-                        if not l_noWait:
-                            randomWait(G_WAIT_FB_MIN, G_WAIT_FB_MAX)
-                    else:
-                        # delete action file if no more actions
-                        os.remove(p_file)
-                        # no need to wait ...
+                            # wait
+                            if not l_noWait:
+                                randomWait(G_WAIT_FB_MIN, G_WAIT_FB_MAX)
+                        else:
+                            # delete action file if no more actions
+                            os.remove(p_file)
+                            # no need to wait ...
 
     # close Selenium web driver
     if g_browserDriver is not None:
@@ -1088,7 +1092,7 @@ if __name__ == "__main__":
     print('|                                                            |')
     print('| Basic facebook presence                                    |')
     print('|                                                            |')
-    print('| v. 3.4 - 06/06/2016                                        |')
+    print('| v. 3.5 - 07/06/2016                                        |')
     print('+------------------------------------------------------------+')
 
     random.seed()
